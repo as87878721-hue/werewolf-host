@@ -1,8 +1,8 @@
-import React, { useState, useEffect } from 'react';
+﻿import React, { useState, useEffect } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView, useWindowDimensions,
 } from 'react-native';
-import { useNavigation, CommonActions } from '@react-navigation/native';
+import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../../App';
 import { Colors } from '../theme/colors';
@@ -17,6 +17,9 @@ import {
   resolveAutomaticDeathRounds,
   getDeathSkillTriggers,
   resolveTimedDeathSkillTarget,
+  computeWinResult,
+  projectDeathState,
+  WinResult,
 } from '../store/gameStore';
 import PlayerButton, { RoleInfo } from '../components/PlayerButton';
 import LogButton from '../components/LogButton';
@@ -31,11 +34,12 @@ type KnightResult = 'wolf' | 'good' | null;
 export default function DayScreen() {
   const navigation = useNavigation<Nav>();
   const {
-    gameMode, playerCount, currentNight, selectedRoles,
+    gameMode, playerCount, currentNight, selectedRoles, nightOrder,
     nightActions, nightHistory, deadPlayers, upperDeadPlayers, playerCardMap, roleMembersMap,
+    singleWinRule, winResult,
     sheriffPlayer, lostVotePlayers, idiotFlippedPlayers,
-    cupidLovers, bishopHolder, knightUsed, goldenBabyPlayers,
-    setSheriff, endDay, setBishopHolder, setKnightUsed, setRoleMembers,
+    cupidLovers, bishopHolder, knightUsed, goldenBabyPlayers, monkVoteTarget, slaveTraderSlaves, fireWolfBurnedPlayers,
+    setSheriff, endDay, setBishopHolder, setKnightUsed, setRoleMembers, setPlayerCardRole, setNightStep, setMonkVoteTarget, setMonkVoteCard,
   } = useGameStore();
 
   const isDualMode = gameMode === 'dual';
@@ -59,6 +63,7 @@ export default function DayScreen() {
     cupidLovers,
     gameMode,
     false,
+    slaveTraderSlaves,
   );
 
   // 血月：上一晚是否發動（延後所有技能公布）
@@ -138,10 +143,81 @@ export default function DayScreen() {
     });
   }, [navigation, currentNight]);
 
-  // ── Step state ─────────────────────────────────────────────────────────
   // 0=警長  1=公布死亡  2=發言  3=投票  4=放逐結果
   const [step, setStep] = useState(0);
 
+  const clearDayStepState = (fromStep: number) => {
+    if (fromStep >= 4) {
+      setExileBadgeAction(null);
+      setExileBadgeRecipient(null);
+      setExileBadgeResolved(false);
+      setExileAbility('none');
+      setExileAbilityTarget(null);
+      setExileAbilityResolved(false);
+      setBmHunterTarget(null);
+      setBmHunterResolved(false);
+      setBmWolfKingTarget(null);
+      setBmWolfKingResolved(false);
+    }
+    if (fromStep >= 3) {
+      setExiledPlayer(null);
+      setMonkVoteMode(false);
+    }
+    if (fromStep >= 2) {
+      setPendingSelfDestruct(null);
+      setLastWordsPlayer(null);
+      setSpeechDeaths([]);
+      setSpeechAbility('none');
+      setSpeechAbilityTarget(null);
+      setSpeechAbilityResolved(false);
+      setSpeechAbilityKills([]);
+      setWwBringTarget(null);
+      setWwBringResolved(false);
+      setDayDeathRounds([]);
+      setHandledDayDeathSkills([]);
+      setDayDeathSkillTarget(null);
+      setSpeechBadgeAction(null);
+      setSpeechBadgeRecipient(null);
+      setSpeechBadgeResolved(false);
+      setKnightDuelActive(false);
+      setKnightPlayer(null);
+      setKnightTarget(null);
+      setKnightResult(null);
+      setKnightDuelResolved(false);
+      setKnightDuelKills([]);
+      setKnightEndsDay(false);
+    }
+    if (fromStep >= 1) {
+      setNightDeathSkillTarget(null);
+      setNightDeathSkillBlocked(null);
+      setNightDeathBadgeAction(null);
+      setNightDeathBadgeRecipient(null);
+      setNightDeathBadgeResolved(false);
+      setBishopTriggerStep(null);
+      setBishopRevealTarget(null);
+    }
+  };
+
+  useEffect(() => {
+    navigation.setOptions({
+      headerLeft: () => (
+        <TouchableOpacity
+          onPress={() => {
+            if (step === 0) {
+              setNightStep(Math.max(nightOrder.length - 1, 0));
+              navigation.goBack();
+            } else {
+              clearDayStepState(step);
+              setStep(previous => Math.max(previous - 1, 0));
+            }
+          }}
+          style={{ paddingHorizontal: 4, paddingVertical: 6 }}
+        >
+          <Text style={{ color: Colors.text, fontSize: 24 }}>{'<'}</Text>
+        </TouchableOpacity>
+      ),
+    });
+  }, [navigation, step, nightOrder.length, setNightStep]);
   // Sheriff
   const [localSheriff, setLocalSheriff] = useState<number | null>(() => {
     if (!sheriffPlayer) return null;
@@ -182,6 +258,7 @@ export default function DayScreen() {
 
   // Step 3: exile (null=未選, undefined=流票, number=放逐對象)
   const [exiledPlayer, setExiledPlayer] = useState<number | null | undefined>(null);
+  const [monkVoteMode, setMonkVoteMode] = useState(false);
 
   // Step 4: badge handover when sheriff is exiled
   const [exileBadgeAction, setExileBadgeAction] = useState<BadgeAction>(null);
@@ -212,13 +289,23 @@ export default function DayScreen() {
   const [bmHunterResolved, setBmHunterResolved] = useState(false);
   const [bmWolfKingTarget, setBmWolfKingTarget] = useState<number | null>(null);
   const [bmWolfKingResolved, setBmWolfKingResolved] = useState(false);
+  const [dayResolvedWinResult, setDayResolvedWinResult] = useState<WinResult | null>(null);
 
   const dayPhaseUpperDeadPlayers = [
     ...new Set([...upperDeadPlayers, ...nightChainDeaths]),
   ];
   const dayChainDeaths = [...new Set(dayDeathRounds.flat())];
+  const extraDirectDayDeathRounds = [
+    ...knightDuelKills,
+    ...(bmHunterResolved && bmHunterTarget !== null ? [bmHunterTarget] : []),
+    ...(bmWolfKingResolved && bmWolfKingTarget !== null ? [bmWolfKingTarget] : []),
+  ].map(player => [player]);
+  const dayDeathTriggerRounds = [
+    ...dayDeathRounds,
+    ...extraDirectDayDeathRounds,
+  ];
   const pendingDayDeathSkill = getDeathSkillTriggers(
-    dayDeathRounds,
+    dayDeathTriggerRounds,
     'day',
     nightActions,
     roleMembersMap,
@@ -229,9 +316,7 @@ export default function DayScreen() {
 
   const directDayDeaths = [
     ...dayChainDeaths,
-    ...knightDuelKills,
-    ...(bmHunterResolved && bmHunterTarget !== null ? [bmHunterTarget] : []),
-    ...(bmWolfKingResolved && bmWolfKingTarget !== null ? [bmWolfKingTarget] : []),
+    ...extraDirectDayDeathRounds.flat(),
   ];
   const resolvedDayDeaths = resolveDreamwalkerCarryDeaths(
     directDayDeaths,
@@ -242,6 +327,19 @@ export default function DayScreen() {
     nightChainDeaths,
   );
   const dreamwalkerCarryDeaths = resolvedDayDeaths.filter(p => !directDayDeaths.includes(p));
+  const previewDeaths = [...new Set([
+    ...nightChainDeaths,
+    ...resolvedDayDeaths,
+  ])];
+  const previewDeathState = projectDeathState(
+    gameMode,
+    deadPlayers,
+    upperDeadPlayers,
+    previewDeaths,
+  );
+  const visualDeathState = step >= 1
+    ? previewDeathState
+    : { deadPlayers, upperDeadPlayers };
 
   // 公布死訊前（step 0 警長競選）：死亡尚未生效，所有非前一局確認死亡者皆可競選
   const sheriffCandidates = playerNums.filter(p => !deadPlayers.includes(p));
@@ -357,6 +455,65 @@ export default function DayScreen() {
     : undefined;
   const bishopDiedBloodMoon = bishopInGame && bloodMoonActivated &&
     currentBishopHolder !== null && nightDeaths.includes(currentBishopHolder) && !bishopResolved;
+  const lastWordsRoleForPreview = lastWordsPlayer !== null
+    ? isDualMode
+      ? getActiveDayRole(lastWordsPlayer)
+      : Object.entries(roleMembersMap).find(([, members]) => (members ?? []).includes(lastWordsPlayer))?.[0]
+    : undefined;
+  const whiteWolfBringChainComplete =
+    lastWordsRoleForPreview !== 'white_wolf' ||
+    wwBringResolved;
+  const bloodMoonDeathChainComplete =
+    !bloodMoonActivated ||
+    ((bmHunterPlayer === undefined || bmHunterResolved) &&
+     (bmWolfKingPlayer === undefined || bmWolfKingResolved));
+  const dayDeathChainComplete =
+    step >= 1 &&
+    nightChainComplete &&
+    pendingDayDeathSkill === undefined &&
+    pendingSelfDestruct === null &&
+    whiteWolfBringChainComplete &&
+    bloodMoonDeathChainComplete &&
+    !(step === 2 && knightDuelActive);
+  const computeCurrentDayWinResult = (extraDeaths: number[] = []) => {
+    const deathState = extraDeaths.length > 0
+      ? projectDeathState(
+          gameMode,
+          deadPlayers,
+          upperDeadPlayers,
+          [...new Set([...previewDeaths, ...extraDeaths])],
+        )
+      : previewDeathState;
+    return computeWinResult({
+      gameMode,
+      singleWinRule,
+      selectedRoles,
+      roleMembersMap,
+      deadPlayers: deathState.deadPlayers,
+      upperDeadPlayers: deathState.upperDeadPlayers,
+      playerCardMap,
+      goldenBabyPlayers,
+      fireWolfBurnedPlayers,
+      resolutionPhase: 'day',
+    });
+  };
+  const previewWinResult = dayDeathChainComplete ? computeCurrentDayWinResult() : null;
+  const displayedWinResult = dayResolvedWinResult ?? previewWinResult ?? winResult;
+  const stopIfDayWin = (extraDeaths: number[] = []): boolean => {
+    const canCheckWithExtraDeaths =
+      extraDeaths.length > 0 &&
+      step >= 1 &&
+      nightChainComplete &&
+      pendingDayDeathSkill === undefined &&
+      pendingSelfDestruct === null &&
+      whiteWolfBringChainComplete &&
+      bloodMoonDeathChainComplete;
+    if (!dayDeathChainComplete && !canCheckWithExtraDeaths) return false;
+    const result = computeCurrentDayWinResult(extraDeaths);
+    if (!result) return false;
+    setDayResolvedWinResult(result);
+    return true;
+  };
 
   // Knight: detect if in game
   const knightInGame = selectedRoles.some(r => r.roleId === 'knight');
@@ -383,6 +540,7 @@ export default function DayScreen() {
   };
 
   const handleWolfSelfDestructEnd = (finalSheriff: number | null, extraDayKills: number[] = []) => {
+    if (stopIfDayWin(extraDayKills)) return;
     setSheriff(finalSheriff);
     endDay({
       exiledPlayer: undefined,
@@ -390,10 +548,7 @@ export default function DayScreen() {
       nightChainDeaths,
       dayKills: [...dayChainDeaths, ...extraDayKills, ...knightDuelKills],
     });
-    navigation.dispatch(CommonActions.reset({
-      index: 1,
-      routes: [{ name: 'Home' }, { name: 'Night' }],
-    }));
+    navigation.navigate('Night');
   };
 
   // ── Role info helpers ──────────────────────────────────────────────────
@@ -510,15 +665,13 @@ export default function DayScreen() {
             textColor={finalTextColor}
             label={getLabel(num)}
             sublabel={statusIcons !== '' ? statusIcons : undefined}
+            isDead={visualDeathState.deadPlayers.includes(num)}
             isDualMode={isDualMode}
             upperRole={upper}
             lowerRole={lower}
             upperDead={
               isDualMode &&
-              (
-                upperDeadPlayers.includes(num) ||
-                (step >= 1 && nightChainComplete && nightChainDeaths.includes(num))
-              )
+              visualDeathState.upperDeadPlayers.includes(num)
             }
             disabled={opts?.isDisabled?.(num)}
             onPress={() => onPress(num)}
@@ -903,6 +1056,82 @@ export default function DayScreen() {
     );
   };
 
+  const renderDeathRoundDetails = (rounds: number[][], keyPrefix: string) => (
+    <>
+      {rounds.map((round, roundIndex) => (
+        <View
+          key={`${keyPrefix}-${roundIndex}`}
+          style={[styles.banner, { borderColor: roundIndex === 0 ? Colors.danger : Colors.warning }]}
+        >
+          <Text style={[styles.bannerText, { color: roundIndex === 0 ? Colors.danger : Colors.warning }]}>
+            {roundIndex === 0 ? '第一輪死訊' : `連鎖死訊 ${roundIndex}`}：{round.map(player => `${player}號`).join('、')}
+          </Text>
+          {round.map(p => {
+            const previousDayDeaths = rounds.slice(0, roundIndex).flat();
+            const deathSlot: 'upper' | 'lower' =
+              upperDeadPlayers.includes(p) || nightChainDeaths.includes(p) || previousDayDeaths.includes(p)
+                ? 'lower'
+                : 'upper';
+            const { upper, lower } = isDualMode ? getDualRoles(p) : {};
+            const isSecondDeath = deathSlot === 'lower';
+            const currentDeathRole = playerCardMap[p]?.[deathSlot];
+            return (
+              <View key={`${keyPrefix}-${roundIndex}-${p}`} style={[styles.deathRow, { marginTop: 6 }]}>
+                <View style={styles.deathNumBox}>
+                  <Text style={styles.deathNum}>{p}</Text>
+                  <Text style={styles.deathNumLabel}>號</Text>
+                </View>
+                <View style={{ flex: 1, gap: 6 }}>
+                  {isDualMode ? (
+                    <>
+                      <Text style={styles.deathSubTitle}>
+                        {isSecondDeath ? '下牌死亡（完全出局）' : '上牌死亡'}
+                      </Text>
+                      <View style={styles.chipRow}>
+                        {upper && <Chip text={`上 ${upper.name}`} color={upper.teamColor} faded={isSecondDeath} />}
+                        {lower && <Chip text={`下 ${lower.name}`} color={lower.teamColor} faded={!isSecondDeath} />}
+                      </View>
+                      {currentDeathRole === undefined && (
+                        <View style={styles.revealRoleBox}>
+                          <Text style={styles.revealRoleHint}>死亡身分未定，請補上身分：</Text>
+                          <View style={styles.revealRoleGrid}>
+                            {revealableRoles.map(role => (
+                              <TouchableOpacity
+                                key={`${keyPrefix}-${roundIndex}-${p}-${role.id}`}
+                                style={[
+                                  styles.revealRoleBtn,
+                                  { borderColor: role.team === 'wolf' ? Colors.wolf : Colors.village },
+                                ]}
+                                onPress={() => {
+                                  setPlayerCardRole(p, deathSlot, role.id);
+                                }}
+                              >
+                                <Text
+                                  style={[
+                                    styles.revealRoleText,
+                                    { color: role.team === 'wolf' ? Colors.wolf : Colors.village },
+                                  ]}
+                                >
+                                  {role.name}
+                                </Text>
+                              </TouchableOpacity>
+                            ))}
+                          </View>
+                        </View>
+                      )}
+                    </>
+                  ) : (
+                    <Text style={styles.deathSubTitle}>本輪出局</Text>
+                  )}
+                </View>
+              </View>
+            );
+          })}
+        </View>
+      ))}
+    </>
+  );
+
   const renderSpeech = () => {
     if (pendingDayDeathSkill) return renderDayDeathSkill();
 
@@ -1049,13 +1278,7 @@ export default function DayScreen() {
               </Text>
             </View>
           )}
-          {dayDeathRounds.map((round, index) => (
-            <View key={`speech-chain-${index}`} style={[styles.banner, { borderColor: index === 0 ? Colors.danger : Colors.warning }]}>
-              <Text style={[styles.bannerText, { color: index === 0 ? Colors.danger : Colors.warning }]}>
-                {index === 0 ? '第一輪死訊' : `連鎖死訊 ${index}`}：{round.map(player => `${player}號`).join('、')}
-              </Text>
-            </View>
-          ))}
+          {renderDeathRoundDetails(dayDeathRounds, 'speech-chain')}
 
           {/* 警長自爆 → 警徽處理（必須在遺言前完成） */}
           {speechSheriffDeathPlayer !== null && renderBadgeUI(
@@ -1279,8 +1502,23 @@ export default function DayScreen() {
   // ── Step 3: 投票放逐 ──────────────────────────────────────────────────
   const renderVote = () => {
     const canVoteTarget = (n: number) => aliveNums.includes(n) && n !== crowSurroundTarget;
+    const monkActive = playerNums.some(n => {
+      if (!aliveNums.includes(n)) return false;
+      if (isDualMode) return getActiveDayRole(n) === 'monk';
+      return (roleMembersMap['monk'] ?? []).includes(n);
+    });
     return (
       <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollPad}>
+        {monkActive && (
+          <TouchableOpacity
+            style={[styles.abilityBtn, monkVoteMode && { borderColor: Colors.warning, backgroundColor: Colors.warning + '20' }]}
+            onPress={() => setMonkVoteMode(prev => !prev)}
+          >
+            <Text style={[styles.abilityBtnText, monkVoteMode && { color: Colors.warning }]}>
+              {monkVoteMode ? '正在選擇僧侶投票' : `僧侶投票${monkVoteTarget ? `：${monkVoteTarget}號` : ''}`}
+            </Text>
+          </TouchableOpacity>
+        )}
         <Text style={styles.hint}>點選被放逐的玩家</Text>
         {tenguDiedThisPhase && (
           <View style={[styles.banner, { borderColor: Colors.wolf }]}>
@@ -1301,12 +1539,23 @@ export default function DayScreen() {
           playerNums,
           n => !aliveNums.includes(n) || n === crowSurroundTarget
             ? { bg: Colors.textMuted + '18', border: Colors.textMuted, textColor: Colors.textMuted }
+            : monkVoteMode && n === monkVoteTarget
+            ? { bg: Colors.warning + '25', border: Colors.warning, textColor: Colors.warning }
             : n === exiledPlayer
             ? { bg: Colors.danger + '25', border: Colors.danger, textColor: Colors.danger }
             : { bg: Colors.surface, border: Colors.surfaceLight, textColor: Colors.textDim },
-          n => n === exiledPlayer ? '放' : undefined,
+          n => monkVoteMode && n === monkVoteTarget ? '僧' : n === exiledPlayer ? '放' : undefined,
           n => {
             if (!canVoteTarget(n)) return;
+            if (monkVoteMode) {
+              const nextPlayer = monkVoteTarget === n ? null : n;
+              setMonkVoteTarget(nextPlayer);
+              setMonkVoteCard(nextPlayer === null ? null : {
+                player: nextPlayer,
+                slot: isDualMode && upperDeadPlayers.includes(nextPlayer) ? 'lower' : 'upper',
+              });
+              return;
+            }
             setExiledPlayer(p => p === n ? null : n);
           },
           { hideRoles: true, isDisabled: n => !canVoteTarget(n) },
@@ -1564,13 +1813,7 @@ export default function DayScreen() {
             </Text>
           </View>
         )}
-        {dayDeathRounds.map((round, index) => (
-          <View key={`day-chain-${index}`} style={[styles.banner, { borderColor: index === 0 ? Colors.danger : Colors.warning }]}>
-            <Text style={[styles.bannerText, { color: index === 0 ? Colors.danger : Colors.warning }]}>
-              {index === 0 ? '第一輪死訊' : `連鎖死訊 ${index}`}：{round.map(player => `${player}號`).join('、')}
-            </Text>
-          </View>
-        ))}
+          {renderDeathRoundDetails(dayDeathRounds, 'day-chain')}
 
         {/* 主教：放逐時觸發查驗傳承 */}
         {bishopInGame && bishopDiedExile && renderBishopUI()}
@@ -1646,6 +1889,8 @@ export default function DayScreen() {
 
   // ── Navigation ─────────────────────────────────────────────────────────
   const handleNext = () => {
+    if (displayedWinResult) return;
+
     if (pendingDayDeathSkill) {
       if (dayDeathSkillTarget !== null) {
         appendDayDeathRounds([dayDeathSkillTarget]);
@@ -1731,6 +1976,7 @@ export default function DayScreen() {
         setKnightUsed(true);
         setKnightDuelActive(false);
         if (targetIsWolf) {
+          if (stopIfDayWin(kills)) return;
           setSheriff(localSheriff);
           endDay({
             exiledPlayer: undefined,
@@ -1738,7 +1984,7 @@ export default function DayScreen() {
             nightChainDeaths,
             dayKills: [...dayChainDeaths, ...kills],
           });
-          navigation.dispatch(CommonActions.reset({ index: 1, routes: [{ name: 'Home' }, { name: 'Night' }] }));
+          navigation.navigate('Night');
           return;
         }
         setStep(3);
@@ -1746,6 +1992,7 @@ export default function DayScreen() {
       }
       // 騎士撞到狼（已解算舊路徑，保留相容）
       if (knightDuelResolved && knightEndsDay) {
+        if (stopIfDayWin(knightDuelKills)) return;
         setSheriff(localSheriff);
         endDay({
           exiledPlayer: undefined,
@@ -1753,7 +2000,7 @@ export default function DayScreen() {
           nightChainDeaths,
           dayKills: [...dayChainDeaths, ...knightDuelKills],
         });
-        navigation.dispatch(CommonActions.reset({ index: 1, routes: [{ name: 'Home' }, { name: 'Night' }] }));
+        navigation.navigate('Night');
         return;
       }
       setStep(3);
@@ -1808,13 +2055,11 @@ export default function DayScreen() {
         ...(bmHunterResolved && bmHunterTarget !== null ? [bmHunterTarget] : []),
         ...(bmWolfKingResolved && bmWolfKingTarget !== null ? [bmWolfKingTarget] : [])],
     });
-    navigation.dispatch(CommonActions.reset({
-      index: 1,
-      routes: [{ name: 'Home' }, { name: 'Night' }],
-    }));
+    navigation.navigate('Night');
   };
 
   const canAdvance = (): boolean => {
+    if (displayedWinResult) return false;
     if (pendingDayDeathSkill) return true;
     if (step === 0 && sheriffDiedLastNight) {
       return badgeAction === 'tear' || (badgeAction === 'handover' && badgeRecipient !== null);
@@ -1865,6 +2110,7 @@ export default function DayScreen() {
     '放逐結果',
   ];
   const nextLabel = (() => {
+    if (displayedWinResult) return '遊戲已結束';
     if (pendingDayDeathSkill) {
       const action = pendingDayDeathSkill.roleId === 'hunter' ? '開槍' : '帶人';
       return dayDeathSkillTarget === null
@@ -1938,6 +2184,21 @@ export default function DayScreen() {
         <LogButton />
       </View>
 
+      {displayedWinResult && (
+        <View style={[
+          styles.winCard,
+          { borderColor: displayedWinResult.winner === 'wolf' ? Colors.wolf : Colors.village },
+        ]}>
+          <Text style={[
+            styles.winTitle,
+            { color: displayedWinResult.winner === 'wolf' ? Colors.wolf : Colors.village },
+          ]}>
+            {displayedWinResult.winner === 'wolf' ? '狼人勝利' : '好人勝利'}
+          </Text>
+          <Text style={styles.winReason}>{displayedWinResult.reason}</Text>
+        </View>
+      )}
+
       {/* Content */}
       <View style={{ flex: 1 }}>
         {step === 0 && renderSheriff()}
@@ -2010,6 +2271,19 @@ const styles = StyleSheet.create({
   headerTitle: { color: Colors.text, fontSize: 15, fontWeight: 'bold' },
   sheriffLine: { color: Colors.warning, fontSize: 11, marginTop: 2 },
   toolColumn: { alignItems: 'flex-end', gap: 4 },
+  winCard: {
+    marginHorizontal: 16,
+    marginTop: 10,
+    marginBottom: 2,
+    backgroundColor: Colors.surface,
+    borderRadius: 10,
+    borderWidth: 1.5,
+    padding: 12,
+    alignItems: 'center',
+    gap: 4,
+  },
+  winTitle: { fontSize: 18, fontWeight: 'bold' },
+  winReason: { color: Colors.textDim, fontSize: 12, textAlign: 'center' },
 
   scroll: { flex: 1 },
   scrollPad: { padding: 16, gap: 10 },
@@ -2164,3 +2438,4 @@ const styles = StyleSheet.create({
   summaryLine: { color: Colors.text, fontSize: 13, lineHeight: 20 },
   summaryLineFinal: { color: Colors.primary, fontWeight: 'bold', fontSize: 14 },
 });
+

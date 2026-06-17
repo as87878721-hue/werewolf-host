@@ -1,4 +1,4 @@
-import React from 'react';
+﻿import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -13,30 +13,36 @@ import {
 } from '../store/gameStore';
 
 type Nav = NativeStackNavigationProp<RootStackParamList, 'Config'>;
+type ConfigVariant = 'default' | 'last' | 'saved';
 
 const summarizeRoles = (config: GameConfigSnapshot) =>
   config.selectedRoles
     .map(entry => {
       const role = ROLES.find(r => r.id === entry.roleId);
-      return `${role?.name ?? entry.roleId}x${entry.count}`;
+      return `${role?.name ?? entry.roleId}×${entry.count}`;
     })
     .join('、');
 
 export default function ConfigScreen() {
   const navigation = useNavigation<Nav>();
-  const { gameMode, savedConfigs, applyConfig } = useGameStore();
+  const { gameMode, lastConfigs, savedConfigs, applyConfig } = useGameStore();
   const defaultConfig = gameMode === 'dual' ? DEFAULT_DUAL_CONFIG : DEFAULT_SINGLE_CONFIG;
-  const savedConfig = savedConfigs[gameMode];
+  const lastConfig = lastConfigs[gameMode];
+  const customConfigs = savedConfigs[gameMode] ?? [];
 
   const chooseConfig = (config: GameConfigSnapshot) => {
     applyConfig(config);
     navigation.navigate('Setup');
   };
 
-  const renderConfig = (label: string, config: GameConfigSnapshot, variant: 'default' | 'saved') => (
+  const renderConfig = (label: string, config: GameConfigSnapshot, variant: ConfigVariant, index?: number) => (
     <TouchableOpacity
-      key={label}
-      style={[styles.configCard, variant === 'saved' && styles.savedCard]}
+      key={`${variant}-${index ?? 0}-${config.name}`}
+      style={[
+        styles.configCard,
+        variant === 'last' && styles.lastCard,
+        variant === 'saved' && styles.savedCard,
+      ]}
       onPress={() => chooseConfig(config)}
       activeOpacity={0.8}
     >
@@ -51,6 +57,11 @@ export default function ConfigScreen() {
           金寶寶：{config.goldenBabyConfig.min}-{config.goldenBabyConfig.max}
         </Text>
       )}
+      {config.mode === 'single' && (
+        <Text style={styles.extraLine}>
+          勝利條件：{config.singleWinRule === 'city' ? '屠城' : '屠邊'}
+        </Text>
+      )}
     </TouchableOpacity>
   );
 
@@ -59,17 +70,31 @@ export default function ConfigScreen() {
       <ScrollView contentContainerStyle={styles.content}>
         <View style={styles.header}>
           <Text style={styles.title}>{gameMode === 'dual' ? '雙身分配置' : '單身分配置'}</Text>
-          <Text style={styles.subtitle}>選擇一組配置後進入角色設定，可再微調並儲存。</Text>
+          <Text style={styles.subtitle}>選擇一組配置後進入角色設定，也可以在設定頁另存新配置。</Text>
         </View>
 
         {renderConfig('預設配置', defaultConfig, 'default')}
 
-        {savedConfig ? (
-          renderConfig('上一輪配置', savedConfig, 'saved')
+        {lastConfig ? (
+          renderConfig('上一輪配置', lastConfig, 'last')
         ) : (
           <View style={styles.emptyCard}>
             <Text style={styles.emptyTitle}>上一輪配置</Text>
-            <Text style={styles.emptyText}>尚未儲存過此模式的配置</Text>
+            <Text style={styles.emptyText}>開始一局後，系統會自動記錄該局使用的配置。</Text>
+          </View>
+        )}
+
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionTitle}>儲存配置</Text>
+          <Text style={styles.sectionSub}>手動儲存的配置會出現在這裡</Text>
+        </View>
+
+        {customConfigs.length > 0 ? (
+          customConfigs.map((config, index) => renderConfig(`儲存配置 ${index + 1}`, config, 'saved', index))
+        ) : (
+          <View style={styles.emptyCard}>
+            <Text style={styles.emptyTitle}>尚無儲存配置</Text>
+            <Text style={styles.emptyText}>在角色設定頁按「儲存配置」後，會新增到這一區。</Text>
           </View>
         )}
       </ScrollView>
@@ -83,6 +108,9 @@ const styles = StyleSheet.create({
   header: { paddingVertical: 6, gap: 4 },
   title: { color: Colors.text, fontSize: 22, fontWeight: 'bold' },
   subtitle: { color: Colors.textDim, fontSize: 13, lineHeight: 18 },
+  sectionHeader: { marginTop: 4, gap: 2 },
+  sectionTitle: { color: Colors.text, fontSize: 16, fontWeight: 'bold' },
+  sectionSub: { color: Colors.textDim, fontSize: 12 },
   configCard: {
     borderWidth: 1.5,
     borderColor: Colors.primary,
@@ -91,7 +119,8 @@ const styles = StyleSheet.create({
     padding: 14,
     gap: 8,
   },
-  savedCard: { borderColor: Colors.warning },
+  lastCard: { borderColor: Colors.warning },
+  savedCard: { borderColor: Colors.village },
   cardHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   cardTitle: { color: Colors.text, fontSize: 16, fontWeight: 'bold' },
   playerCount: { color: Colors.primary, fontSize: 14, fontWeight: 'bold' },
@@ -107,5 +136,6 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   emptyTitle: { color: Colors.textDim, fontSize: 15, fontWeight: 'bold' },
-  emptyText: { color: Colors.textMuted, fontSize: 12 },
+  emptyText: { color: Colors.textMuted, fontSize: 12, lineHeight: 17 },
 });
+

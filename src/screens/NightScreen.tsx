@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+﻿import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, useWindowDimensions } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -17,6 +17,8 @@ import {
   getWolfNightParticipants,
   getNightDeathAbilityStatus,
   getGravediggerLowerInfo,
+  computeWinResult,
+  projectDeathState,
 } from '../store/gameStore';
 import PlayerButton, { RoleInfo } from '../components/PlayerButton';
 import LogButton from '../components/LogButton';
@@ -55,17 +57,38 @@ const ROLE_CONFIG: Record<string, { memberHint: string; actions: ActionDef[] }> 
   knight:      { memberHint: '點選騎士是誰',        actions: [] },
   old_rogue:   { memberHint: '點選老流氓是誰',      actions: [] },
   golden_baby: { memberHint: '點選金寶寶是誰',      actions: [] },
+  spirit_wolf: { memberHint: '選擇靈狼玩家', actions: [
+    { key: 'mimic', label: '👻 模仿出局者', maxTargets: 1, color: Colors.wolf },
+    { key: 'spiritkill', label: '🔪 靈狼刀', maxTargets: 1, color: Colors.primary },
+    { key: 'spiritcheck', label: '🔮 模仿查驗', maxTargets: 1, color: '#9c27b0' },
+    { key: 'spiritsave', label: '💊 靈狼解藥', maxTargets: 1, color: Colors.village },
+    { key: 'spiritpoison', label: '☠️ 靈狼毒藥', maxTargets: 1, color: Colors.danger },
+  ] },
+  shaman: { memberHint: '選擇薩滿玩家', actions: [{ key: 'shaman', label: '🪬 指定目標', maxTargets: 1, color: Colors.village }] },
+  slave_trader: { memberHint: '選擇奴隸販子玩家', actions: [{ key: 'enslave', label: '⛓️ 奴役', maxTargets: 1, color: Colors.warning }] },
+  fire_wolf: { memberHint: '選擇火狼玩家', actions: [
+    { key: 'burn', label: '🔥 燒成平民', maxTargets: 1, color: Colors.wolf },
+    { key: 'firekill', label: '🔪 代替狼刀', maxTargets: 1, color: Colors.primary },
+  ] },
+  blind_swordsman: { memberHint: '選擇盲人武士玩家', actions: [
+    { key: 'monkstrike', label: '🙏 依僧侶票擊殺', maxTargets: 1, color: Colors.warning },
+    { key: 'swordkill', label: '🗡️ 自行擊殺', maxTargets: 1, color: Colors.danger },
+  ] },
+  monk: { memberHint: '選擇僧侶玩家', actions: [] },
+  explorer: { memberHint: '選擇探險家玩家', actions: [] },
+  mummy: { memberHint: '選擇木乃伊玩家', actions: [] },
 };
 
 export default function NightScreen() {
   const navigation = useNavigation<Nav>();
   const {
-    gameMode, playerCount, nightOrder, currentStep, currentNight, selectedRoles,
+    gameMode, playerCount, nightOrder, currentStep, currentNight, selectedRoles, singleWinRule,
     nightActions, nightHistory, saveUsed, poisonUsed, checkedPlayers,
     roleMembersMap, deadPlayers, upperDeadPlayers, playerCardMap,
-    lastDayExileInfo, sharpshooterUsed, anubisScaledPlayers, cupidLovers,
-    goldenBabyConfig, goldenBabyPlayers,
-    recordAction, nextStep, finishNight, setRoleMembers, transformThief, setGoldenBabyPlayers,
+    winResult,
+    lastDayExileInfo, lastDayExiledRoleId, sharpshooterUsed, anubisScaledPlayers, cupidLovers,
+    goldenBabyConfig, goldenBabyPlayers, spiritWolfMimic, spiritWolfSaveUsed, spiritWolfPoisonUsed, mummySealedRoles, monkVoteTarget, monkVoteCard, fireWolfBurnedPlayers, fireWolfBurnedCards, fireWolfUsed, slaveTraderSlaves,
+    recordAction, nextStep, prevStep, rewindNightStep, finishNight, setRoleMembers, transformThief, setGoldenBabyPlayers,
   } = useGameStore();
   const isDualMode = gameMode === 'dual';
   const { width } = useWindowDimensions();
@@ -97,11 +120,35 @@ export default function NightScreen() {
   const [sharpshooterKillTarget, setSharpshooterKillTarget] = useState<number | undefined>(undefined);
   // ── 盜賊 ──
   const [thiefChosenRole, setThiefChosenRole] = useState<string | null>(null);
+  const [mummySelectedRole, setMummySelectedRole] = useState<string | null>(null);
 
   const isDone = currentStep >= nightOrder.length;
   const roleId = nightOrder[currentStep];
   const role = ROLES.find(r => r.id === roleId);
+  const sealedByMummy = nightActions.some(a => a.roleId === 'mummy' && a.mummySealedRole === roleId);
   const roleConfig = ROLE_CONFIG[roleId] ?? { memberHint: '確認後繼續', actions: [] };
+  const spiritMimicReady = spiritWolfMimic !== null && currentNight >= spiritWolfMimic.availableNight;
+  const spiritAllowedActionKeys = (() => {
+    if (roleId !== 'spirit_wolf') return null;
+    if (!spiritWolfMimic) return new Set(['mimic']);
+    if (!spiritMimicReady) return new Set<string>();
+    const mimicRole = ROLES.find(r => r.id === spiritWolfMimic.roleId);
+    if (mimicRole?.team === 'wolf') return new Set(['spiritkill']);
+    if (spiritWolfMimic.roleId === 'seer') return new Set(['spiritcheck']);
+    if (spiritWolfMimic.roleId === 'witch') {
+      return new Set([
+        ...(!spiritWolfSaveUsed ? ['spiritsave'] : []),
+        ...(!spiritWolfPoisonUsed ? ['spiritpoison'] : []),
+      ]);
+    }
+    return new Set<string>();
+  })();
+  const baseAvailableRoleActions = roleId === 'fire_wolf'
+    ? roleConfig.actions.filter(action => !fireWolfUsed && action.key === 'burn')
+    : roleConfig.actions;
+  const availableRoleActions = spiritAllowedActionKeys
+    ? baseAvailableRoleActions.filter(action => spiritAllowedActionKeys.has(action.key))
+    : baseAvailableRoleActions;
   const maxMembers = roleId === 'golden_baby'
     ? goldenBabyConfig.max
     : selectedRoles.find(r => r.roleId === roleId)?.count ?? 1;
@@ -180,11 +227,37 @@ export default function NightScreen() {
         deadPlayers,
       )
     : [];
-  const wolfNightParticipants = roleId === 'werewolf'
-    ? [...new Set([...activeMembers, ...knownWolfNightParticipants])]
+  const activeFireWolfMembers = roleId === 'werewolf'
+    ? getActiveNightRoleMembers(
+        'fire_wolf',
+        roleMembersMap['fire_wolf'] ?? [],
+        gameMode,
+        roleMembersMap,
+        playerCardMap,
+        upperDeadPlayers,
+        deadPlayers,
+      )
     : [];
-  const skillMembers = roleId === 'werewolf' ? wolfNightParticipants : activeMembers;
-  const canUseRoleSkill = skillMembers.length > 0;
+  const fireWolfMayJoinWolfNight = roleId === 'werewolf' && (
+    fireWolfUsed ||
+    (knownWolfNightParticipants.length === 0 && activeFireWolfMembers.length > 0)
+  );
+  const wolfNightParticipants = roleId === 'werewolf'
+    ? [...new Set([
+        ...activeMembers,
+        ...knownWolfNightParticipants,
+        ...(fireWolfMayJoinWolfNight ? activeFireWolfMembers : []),
+      ])]
+    : [];
+  const isBurnedByFireWolf = (player: number) => {
+    if (role?.team !== 'village' || ['villager', 'wild_child', 'golden_baby'].includes(roleId)) return false;
+    if (gameMode === 'single') return fireWolfBurnedPlayers.includes(player);
+    const slot = upperDeadPlayers.includes(player) ? 'lower' : 'upper';
+    return fireWolfBurnedCards.some(card => card.player === player && card.slot === slot);
+  };
+  const skillMembersRaw = roleId === 'werewolf' ? wolfNightParticipants : activeMembers;
+  const skillMembers = skillMembersRaw.filter(player => !isBurnedByFireWolf(player));
+  const canUseRoleSkill = skillMembers.length > 0 && !sealedByMummy;
   const hasSelectedRolePosition =
     rolePositionKnown || selectedRoleMembers.length > 0 || (roleId === 'werewolf' && wolfNightParticipants.length > 0);
   const shapeshifterMembers = roleMembersMap['shapeshifter'] ?? [];
@@ -275,14 +348,73 @@ export default function NightScreen() {
   const wolfKillTarget =
     nightActions.find(a => a.roleId === 'werewolf' || a.roleId === 'wolf_king')?.killTarget ??
     nightActions.find(a => a.roleId === 'tengu')?.tenguKillTargets?.[0];
+  const shamanKnifeTarget = nightActions.find(a => a.roleId === 'shaman' && a.shamanMode === 'knife')?.shamanTarget;
+
+  const getSingleRoleForPlayer = (player: number): string | undefined =>
+    Object.entries(roleMembersMap).find(([, list]) => (list ?? []).includes(player))?.[0];
+  const isGodRole = (rid: string | undefined) => {
+    if (!rid || rid === 'villager' || rid === 'wild_child' || rid === 'golden_baby') return false;
+    const def = ROLES.find(r => r.id === rid);
+    return def?.team === 'village';
+  };
+  const wolfRoleIds = new Set(ROLES.filter(r => r.team === 'wolf').map(r => r.id));
+  const activeWolfPlayers = playerNums.filter(player => {
+    if (deadPlayers.includes(player)) return false;
+    if (gameMode === 'dual') {
+      const activeRole = upperDeadPlayers.includes(player) ? playerCardMap[player]?.lower : playerCardMap[player]?.upper;
+      return activeRole !== undefined && (wolfRoleIds.has(activeRole) || activeRole === 'wild_child');
+    }
+    const activeRole = getSingleRoleForPlayer(player);
+    return activeRole !== undefined && (wolfRoleIds.has(activeRole) || activeRole === 'wild_child');
+  });
+  const explorerResult: 'clockwise' | 'counterclockwise' | 'unknown' = (() => {
+    const explorer = activeMembers[0];
+    if (!explorer || sealedByMummy) return 'unknown';
+    let cw = Infinity;
+    let ccw = Infinity;
+    for (const wolf of activeWolfPlayers) {
+      if (wolf === explorer) continue;
+      cw = Math.min(cw, (wolf - explorer + totalPlayers) % totalPlayers);
+      ccw = Math.min(ccw, (explorer - wolf + totalPlayers) % totalPlayers);
+    }
+    if (!Number.isFinite(cw) || cw === ccw) return 'unknown';
+    return cw < ccw ? 'clockwise' : 'counterclockwise';
+  })();
+  const mummyNightIndex = nightOrder.indexOf('mummy');
+  const mummyRoleOptions = ROLES.filter(r =>
+    r.team === 'village' &&
+    r.id !== 'villager' &&
+    r.id !== 'wild_child' &&
+    r.id !== 'golden_baby' &&
+    r.hasNightAction
+  );
+  const monkVoteCardDiedToday = (() => {
+    if (!monkVoteCard || !lastDayExileInfo || lastDayExileInfo.player !== monkVoteCard.player) return false;
+    if (gameMode === 'single') return true;
+    const exiledSlot = lastDayExileInfo.upperWasAlive ? 'upper' : 'lower';
+    return monkVoteCard.slot === exiledSlot;
+  })();
+  const effectiveMonkVoteTarget = monkVoteCardDiedToday ? undefined : monkVoteTarget ?? undefined;
 
   useEffect(() => {
     navigation.setOptions({
       title: `第 ${currentNight} 晚`,
+      headerLeft: currentStep > 0
+        ? () => (
+            <TouchableOpacity onPress={() => rewindNightStep(currentStep - 1)} style={{ paddingHorizontal: 4, paddingVertical: 6 }}>
+              <Text style={{ color: Colors.text, fontSize: 24 }}>{'<'}</Text>
+            </TouchableOpacity>
+          )
+        : currentNight > 1 && navigation.canGoBack()
+        ? () => (
+            <TouchableOpacity onPress={() => navigation.goBack()} style={{ paddingHorizontal: 4, paddingVertical: 6 }}>
+              <Text style={{ color: Colors.text, fontSize: 24 }}>{'<'}</Text>
+            </TouchableOpacity>
+          )
+        : () => null,
       headerRight: () => <RandomToolButton />,
     });
-  }, [navigation, currentNight]);
-
+  }, [navigation, currentNight, currentStep, prevStep, rewindNightStep]);
   // 盜賊僅第一晚出現，後續夜晚自動跳過
   useEffect(() => {
     const savedMembers = roleId === 'golden_baby'
@@ -322,12 +454,13 @@ export default function NightScreen() {
     setSharpshooterDeclared(false);
     setSharpshooterKillTarget(undefined);
     setThiefChosenRole(null);
+    setMummySelectedRole(null);
 
     if (savedRoleCanAct && !savedNeedsMoreKnownRolePositions) {
       if (roleId === 'seer') {
         setActiveKey('check');
       } else if (roleId !== 'witch') {
-        setActiveKey(ROLE_CONFIG[roleId]?.actions[0]?.key ?? null);
+        setActiveKey(availableRoleActions[0]?.key ?? null);
       } else {
         setActiveKey(null);
       }
@@ -339,7 +472,8 @@ export default function NightScreen() {
 
   // ── 點擊玩家號碼 ──
   const togglePlayer = (num: number) => {
-    if (deadPlayers.includes(num)) return;
+    const canSelectDeadForSpiritMimic = roleId === 'spirit_wolf' && activeKey === 'mimic';
+    if (deadPlayers.includes(num) && !canSelectDeadForSpiritMimic) return;
     const isChoosingRolePosition =
       canEditRolePosition &&
       activeKey === null &&
@@ -430,7 +564,7 @@ export default function NightScreen() {
       });
     } else {
       if (!canUseRoleSkill) return;
-      const def = roleConfig.actions.find(a => a.key === activeKey);
+      const def = availableRoleActions.find(a => a.key === activeKey);
       if (!def || def.maxTargets === 0) return;
       // 烏鴉不可環繞自己（members 是本步驟已點選的烏鴉玩家）
       if (roleId === 'crow' && activeKey === 'surround' && members.includes(num)) return;
@@ -490,6 +624,48 @@ export default function NightScreen() {
         break;
       case 'thief':
         if (thiefChosenRole) action.thiefRole = thiefChosenRole;
+        break;
+      case 'mummy':
+        if (mummySelectedRole) action.mummySealedRole = mummySelectedRole;
+        break;
+      case 'explorer':
+        action.explorerResult = explorerResult;
+        break;
+      case 'shaman':
+        action.shamanTarget = actionTargets['shaman']?.[0];
+        action.shamanMode = lastDayExiledRoleId
+          ? (ROLES.find(r => r.id === lastDayExiledRoleId)?.team === 'wolf' ? 'knife' : 'shield')
+          : 'none';
+        break;
+      case 'slave_trader':
+        action.slaveTarget = actionTargets['enslave']?.[0];
+        break;
+      case 'spirit_wolf':
+        action.spiritWolfMimicTarget = actionTargets['mimic']?.[0];
+        action.spiritWolfKillTarget = actionTargets['spiritkill']?.[0];
+        action.spiritWolfCheckTarget = actionTargets['spiritcheck']?.[0];
+        action.spiritWolfSaveTarget = actionTargets['spiritsave']?.[0];
+        action.spiritWolfPoisonTarget = actionTargets['spiritpoison']?.[0];
+        if (action.spiritWolfCheckTarget !== undefined) {
+          action.spiritWolfCheckRole = getSingleRoleForPlayer(action.spiritWolfCheckTarget) ??
+            (upperDeadPlayers.includes(action.spiritWolfCheckTarget)
+              ? playerCardMap[action.spiritWolfCheckTarget]?.lower
+              : playerCardMap[action.spiritWolfCheckTarget]?.upper);
+        }
+        action.spiritWolfMimicRole = spiritWolfMimic?.availableNight !== undefined && spiritWolfMimic.availableNight <= currentNight
+          ? spiritWolfMimic.roleId
+          : undefined;
+        break;
+      case 'fire_wolf':
+        action.fireWolfTarget = actionTargets['burn']?.[0];
+        action.fireWolfKillTarget = actionTargets['firekill']?.[0];
+        break;
+      case 'blind_swordsman':
+        action.blindSwordsmanMode = activeKey === 'monkstrike' ? 'monk_vote' : activeKey === 'swordkill' ? 'kill' : undefined;
+        action.blindSwordsmanTarget =
+          action.blindSwordsmanMode === 'monk_vote'
+            ? effectiveMonkVoteTarget
+            : actionTargets['swordkill']?.[0];
         break;
       case 'tengu': {
         const kills = actionTargets['kill'] ?? [];
@@ -577,7 +753,7 @@ export default function NightScreen() {
     // 通用行動目標（預言家已在上方處理，不走此分支）
     for (const [key, targets] of Object.entries(actionTargets)) {
       if (targets.includes(num)) {
-        const def = roleConfig.actions.find(a => a.key === key);
+        const def = availableRoleActions.find(a => a.key === key);
         const c = def?.color ?? Colors.primary;
         return { bg: c + '35', border: c, textColor: Colors.text };
       }
@@ -674,7 +850,7 @@ export default function NightScreen() {
       return r ? `已選：${r.emoji} ${r.name}` : '選擇盜賊拿走的腳色牌';
     }
     if (activeKey === null) return roleConfig.memberHint;
-    const def = roleConfig.actions.find(a => a.key === activeKey);
+    const def = availableRoleActions.find(a => a.key === activeKey);
     return def ? `↑ 點選${def.label.replace(/^.+?\s/, '')}目標` : roleConfig.memberHint;
   };
 
@@ -682,6 +858,40 @@ export default function NightScreen() {
   const gravediggerInfo = isDualMode
     ? getGravediggerLowerInfo(lastDayExileInfo, playerCardMap, deadPlayers)
     : null;
+  const previewNightDeaths = isDone
+    ? computeNightDeaths(
+        nightActions,
+        roleMembersMap,
+        playerCardMap,
+        upperDeadPlayers,
+        prevDreamwalkerTarget,
+        cupidLovers,
+        gameMode,
+        true,
+        slaveTraderSlaves,
+      )
+    : [];
+  const previewNightDeathState = projectDeathState(
+    gameMode,
+    deadPlayers,
+    upperDeadPlayers,
+    previewNightDeaths,
+  );
+  const previewNightWinResult = isDone
+    ? computeWinResult({
+        gameMode,
+        singleWinRule,
+        selectedRoles,
+        roleMembersMap,
+        deadPlayers: previewNightDeathState.deadPlayers,
+        upperDeadPlayers: previewNightDeathState.upperDeadPlayers,
+        playerCardMap,
+        goldenBabyPlayers,
+        fireWolfBurnedPlayers,
+        resolutionPhase: 'night',
+      })
+    : null;
+  const displayedWinResult = previewNightWinResult ?? winResult;
 
   // ── 完成夜晚畫面 ──
   if (isDone) {
@@ -689,6 +899,20 @@ export default function NightScreen() {
       <View style={styles.doneContainer}>
         <Text style={styles.doneEmoji}>🌙</Text>
         <Text style={styles.doneTitle}>夜晚行動完成</Text>
+        {displayedWinResult && (
+          <View style={[
+            styles.winCard,
+            { borderColor: displayedWinResult.winner === 'wolf' ? Colors.wolf : Colors.village },
+          ]}>
+            <Text style={[
+              styles.winTitle,
+              { color: displayedWinResult.winner === 'wolf' ? Colors.wolf : Colors.village },
+            ]}>
+              {displayedWinResult.winner === 'wolf' ? '狼人勝利' : '好人勝利'}
+            </Text>
+            <Text style={styles.winReason}>{displayedWinResult.reason}</Text>
+          </View>
+        )}
         <TouchableOpacity style={styles.doneBtn} onPress={() => { finishNight(); navigation.navigate('Day'); }}>
           <Text style={styles.doneBtnText}>☀️ 進入白天 →</Text>
         </TouchableOpacity>
@@ -720,6 +944,21 @@ export default function NightScreen() {
       <View style={styles.progressBar}>
         <View style={[styles.progressFill, { width: `${progress}%` }]} />
       </View>
+
+      {displayedWinResult && (
+        <View style={[
+          styles.activeWinCard,
+          { borderColor: displayedWinResult.winner === 'wolf' ? Colors.wolf : Colors.village },
+        ]}>
+          <Text style={[
+            styles.activeWinTitle,
+            { color: displayedWinResult.winner === 'wolf' ? Colors.wolf : Colors.village },
+          ]}>
+            {displayedWinResult.winner === 'wolf' ? '狼人勝利' : '好人勝利'}
+          </Text>
+          <Text style={styles.activeWinReason}>{displayedWinResult.reason}</Text>
+        </View>
+      )}
 
       {/* ── 上半部：腳色 + 號碼格 ── */}
       <View style={styles.topHalf}>
@@ -882,6 +1121,14 @@ export default function NightScreen() {
                     </View>
                   );
                 }
+                if (status === 'sealed') {
+                  return (
+                    <View key={player} style={[styles.infoCard, { borderColor: Colors.textMuted }]}>
+                      <Text style={[styles.infoCardTitle, { color: Colors.textMuted }]}>木乃伊封印：{player}號不可發動</Text>
+                      <Text style={styles.infoCardBody}>{isHunter ? '獵人不可開槍' : '狼王不可帶人'}</Text>
+                    </View>
+                  );
+                }
                 return (
                   <View key={player} style={[styles.infoCard, { borderColor: Colors.village }]}>
                     <Text style={[styles.infoCardTitle, { color: Colors.village }]}>✅ {player}號可以發動技能</Text>
@@ -1001,6 +1248,71 @@ export default function NightScreen() {
         )}
 
         {/* 盜賊專用 */}
+        {canUseRoleSkill && roleId === 'explorer' && (
+          <View style={[styles.infoCard, { borderColor: Colors.village }]}>
+            <Text style={[styles.infoCardTitle, { color: Colors.village }]}>🧭 探險家資訊</Text>
+            <Text style={styles.infoCardBody}>
+              {explorerResult === 'clockwise' ? '順時針' : explorerResult === 'counterclockwise' ? '逆時針' : '未知'}
+            </Text>
+          </View>
+        )}
+
+        {canUseRoleSkill && roleId === 'spirit_wolf' && actionTargets['spiritcheck']?.[0] !== undefined && (
+          <View style={[styles.infoCard, { borderColor: '#9c27b0' }]}>
+            <Text style={[styles.infoCardTitle, { color: '#9c27b0' }]}>靈狼查驗結果</Text>
+            <Text style={styles.infoCardBody}>
+              {actionTargets['spiritcheck'][0]}號：
+              {ROLES.find(r => r.id === (
+                getSingleRoleForPlayer(actionTargets['spiritcheck'][0]) ??
+                (upperDeadPlayers.includes(actionTargets['spiritcheck'][0])
+                  ? playerCardMap[actionTargets['spiritcheck'][0]]?.lower
+                  : playerCardMap[actionTargets['spiritcheck'][0]]?.upper)
+              ))?.name ?? '未知'}
+            </Text>
+          </View>
+        )}
+
+        {canUseRoleSkill && roleId === 'spirit_wolf' && spiritWolfMimic?.roleId === 'witch' && spiritMimicReady && (
+          <View style={[styles.infoCard, { borderColor: Colors.village }]}>
+            <Text style={[styles.infoCardTitle, { color: Colors.village }]}>靈狼女巫看到的刀口</Text>
+            <Text style={styles.infoCardBody}>
+              {shamanKnifeTarget ? `薩滿刀：${shamanKnifeTarget}號` : '今晚沒有薩滿刀口'}
+            </Text>
+          </View>
+        )}
+
+        {canUseRoleSkill && roleId === 'mummy' && (
+          <>
+            <Text style={styles.noActionText}>選擇今晚要封印的神職角色種類</Text>
+            <View style={styles.thiefRoleGrid}>
+              {mummyRoleOptions.map(r => {
+                const optionNightIndex = nightOrder.indexOf(r.id);
+                const disabled =
+                  optionNightIndex === -1 ||
+                  mummyNightIndex === -1 ||
+                  optionNightIndex <= mummyNightIndex ||
+                  mummySealedRoles.includes(r.id);
+                return (
+                  <TouchableOpacity
+                    key={r.id}
+                    style={[
+                      styles.thiefRoleBtn,
+                      { borderColor: disabled ? Colors.textMuted : Colors.warning, opacity: disabled ? 0.45 : 1 },
+                      mummySelectedRole === r.id && { backgroundColor: Colors.warning + '30' },
+                    ]}
+                    disabled={disabled}
+                    onPress={() => setMummySelectedRole(prev => prev === r.id ? null : r.id)}
+                  >
+                    <Text style={[styles.thiefRoleBtnText, { color: disabled ? Colors.textMuted : Colors.warning }]}>
+                      {r.emoji} {r.name}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </>
+        )}
+
         {canUseRoleSkill && roleId === 'thief' && (
           <>
             <Text style={styles.noActionText}>選擇盜賊從入局腳色中拿走的腳色牌</Text>
@@ -1027,16 +1339,16 @@ export default function NightScreen() {
         {/* 通用行動按鈕（排除已有特殊 UI 的腳色） */}
         {canUseRoleSkill && roleId !== 'witch' && roleId !== 'seer' && roleId !== 'hunter' && roleId !== 'wolf_king' &&
          roleId !== 'blood_moon' && roleId !== 'bear_tamer' && roleId !== 'gravedigger' &&
-         roleId !== 'sharpshooter' && roleId !== 'thief' && (
+         roleId !== 'sharpshooter' && roleId !== 'thief' && roleId !== 'explorer' && roleId !== 'mummy' && (
           <>
-            {roleConfig.actions.length > 0 && skillMembers.length === 0 && (
+            {availableRoleActions.length > 0 && skillMembers.length === 0 && (
               <View style={[styles.infoCard, { borderColor: Colors.textMuted }]}>
                 <Text style={[styles.infoCardBody, { color: Colors.textMuted }]}>請先選擇{roleConfig.memberHint.replace('點選', '').replace('是誰', '')}的位置，才能發動技能</Text>
               </View>
             )}
-            {roleConfig.actions.length > 0 && skillMembers.length > 0 ? (
+            {availableRoleActions.length > 0 && skillMembers.length > 0 ? (
               <View style={styles.actionRow}>
-                {roleConfig.actions.map(def => {
+                {availableRoleActions.map(def => {
                   const targets = actionTargets[def.key] ?? [];
                   return (
                     <TouchableOpacity
@@ -1067,19 +1379,21 @@ export default function NightScreen() {
                   );
                 })}
               </View>
-            ) : roleConfig.actions.length === 0 ? (
+            ) : availableRoleActions.length === 0 ? (
               <Text style={styles.noActionText}>此腳色無夜間行動，確認後繼續</Text>
             ) : null}
           </>
         )}
 
         <TouchableOpacity
-          style={[styles.nextBtn, goldenBabyCountInvalid && styles.nextBtnDisabled]}
+          style={[styles.nextBtn, (goldenBabyCountInvalid || displayedWinResult) && styles.nextBtnDisabled]}
           onPress={handleNext}
-          disabled={goldenBabyCountInvalid}
+          disabled={goldenBabyCountInvalid || !!displayedWinResult}
         >
           <Text style={styles.nextBtnText}>
-            {!canUseRoleSkill
+            {displayedWinResult
+              ? '遊戲已結束'
+              : !canUseRoleSkill
               ? isLastStep ? '跳過 → 結束夜晚' : '跳過 → 下一位'
               : isLastStep ? '完成 → 結束夜晚' : '完成 → 下一位'}
           </Text>
@@ -1093,6 +1407,18 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.background },
   progressBar: { height: 3, backgroundColor: Colors.surfaceLight },
   progressFill: { height: '100%', backgroundColor: Colors.primary },
+  activeWinCard: {
+    marginHorizontal: 16,
+    marginTop: 10,
+    borderRadius: 10,
+    borderWidth: 2,
+    padding: 12,
+    alignItems: 'center',
+    backgroundColor: Colors.surface,
+    gap: 4,
+  },
+  activeWinTitle: { fontSize: 18, fontWeight: 'bold' },
+  activeWinReason: { color: Colors.textDim, fontSize: 12, textAlign: 'center' },
 
   topHalf: { flex: 1, paddingHorizontal: 16, paddingTop: 8 },
   roleRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 },
@@ -1167,6 +1493,19 @@ const styles = StyleSheet.create({
   doneContainer: { flex: 1, backgroundColor: Colors.background, alignItems: 'center', justifyContent: 'center', padding: 32 },
   doneEmoji: { fontSize: 72, marginBottom: 16 },
   doneTitle: { fontSize: 24, fontWeight: 'bold', color: Colors.text, marginBottom: 40 },
+  winCard: {
+    width: '100%',
+    backgroundColor: Colors.surface,
+    borderRadius: 12,
+    borderWidth: 1,
+    padding: 16,
+    marginBottom: 16,
+    alignItems: 'center',
+    gap: 6,
+  },
+  winTitle: { fontSize: 22, fontWeight: 'bold' },
+  winReason: { color: Colors.textDim, fontSize: 13, textAlign: 'center' },
   doneBtn: { backgroundColor: Colors.primary, borderRadius: 13, paddingVertical: 16, alignItems: 'center', width: '100%' },
   doneBtnText: { color: Colors.text, fontSize: 16, fontWeight: 'bold' },
 });
+

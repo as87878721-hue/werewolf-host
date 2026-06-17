@@ -18,6 +18,7 @@ const TAB_CONFIG: { key: Tab; label: string; color: string }[] = [
 
 const VILLAGER_IDS = new Set(['villager', 'wild_child']);
 const EXTRA_OPTION_IDS = new Set(['golden_baby']);
+const SINGLE_ONLY_ROLE_IDS = new Set(['spirit_wolf', 'shaman', 'slave_trader']);
 
 const TAB_ROLES: Record<Tab, typeof ROLES> = {
   wolf: ROLES.filter(r => r.team === 'wolf'),
@@ -37,17 +38,20 @@ export default function SetupScreen() {
     playerCount,
     selectedRoles,
     goldenBabyConfig,
+    singleWinRule,
     configName,
     addRole,
     removeRole,
     initNightOrder,
     setPlayerCount,
     setGoldenBabyConfig,
+    setSingleWinRule,
     setConfigName,
     saveCurrentConfig,
   } = useGameStore();
   const [activeTab, setActiveTab] = useState<Tab>('wolf');
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [showDetails, setShowDetails] = useState(false);
 
   const getCount = (roleId: string) =>
     selectedRoles.find(r => r.roleId === roleId)?.count ?? 0;
@@ -83,7 +87,7 @@ export default function SetupScreen() {
     navigation.navigate('Order');
   };
 
-  const roles = TAB_ROLES[activeTab];
+  const roles = TAB_ROLES[activeTab].filter(role => gameMode === 'single' || !SINGLE_ONLY_ROLE_IDS.has(role.id));
   const activeColor = TAB_CONFIG.find(t => t.key === activeTab)!.color;
   const pickedRoles = selectedRoles
     .filter(r => r.count > 0)
@@ -93,75 +97,109 @@ export default function SetupScreen() {
   return (
     <View style={styles.container}>
       <View style={styles.setupPanel}>
-        <View style={styles.configNameBox}>
-          <Text style={styles.fieldLabel}>配置名稱</Text>
-          <TextInput
-            value={configName}
-            onChangeText={setConfigName}
-            style={styles.input}
-            placeholder="輸入配置名稱"
-            placeholderTextColor={Colors.textMuted}
-          />
-        </View>
+        <TouchableOpacity
+          style={styles.detailToggle}
+          onPress={() => setShowDetails(prev => !prev)}
+          activeOpacity={0.75}
+        >
+          <Text style={styles.detailToggleText}>詳細設置</Text>
+          <Text style={styles.detailToggleMeta}>{showDetails ? '收起' : '展開'}</Text>
+        </TouchableOpacity>
 
-        <View style={styles.fieldRow}>
-          <View style={styles.fieldBlock}>
-            <Text style={styles.fieldLabel}>遊戲人數</Text>
-            <TextInput
-              value={String(playerCount)}
-              onChangeText={text => setPlayerCount(clampCount(text, playerCount))}
-              keyboardType="number-pad"
-              style={styles.input}
-              maxLength={2}
-            />
-          </View>
-          <View style={styles.cardStatus}>
-            <Text style={styles.statusMain}>{roleCardCount}/{requiredCards}</Text>
-            <Text style={styles.statusSub}>
-              {missingCards > 0 ? `仍缺 ${missingCards} 張角色牌` : '角色牌足夠'}
-            </Text>
-          </View>
-        </View>
-
-        <View style={styles.ruleBox}>
-          <Text style={styles.ruleText}>
-            {gameMode === 'dual' ? '雙身分：玩家人數 x 2' : '單身分：玩家人數'}
-            {thiefExtraCards > 0 ? '，盜賊額外 +2 張' : ''}
-          </Text>
-        </View>
-
-        {gameMode === 'dual' && (
-          <>
-            <View style={styles.goldenBox}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.fieldLabel}>金寶寶數量範圍</Text>
-                <Text style={styles.goldenHint}>金寶寶不是角色牌，不計入角色牌數。</Text>
-              </View>
+        {showDetails && (
+          <View style={styles.detailBody}>
+            <View style={styles.configNameBox}>
+              <Text style={styles.fieldLabel}>配置名稱</Text>
               <TextInput
-                value={String(goldenBabyConfig.min)}
-                onChangeText={setGoldenMin}
-                keyboardType="number-pad"
-                style={styles.smallInput}
-                maxLength={2}
-              />
-              <Text style={styles.rangeDash}>-</Text>
-              <TextInput
-                value={String(goldenBabyConfig.max)}
-                onChangeText={setGoldenMax}
-                keyboardType="number-pad"
-                style={styles.smallInput}
-                maxLength={2}
+                value={configName}
+                onChangeText={setConfigName}
+                style={styles.input}
+                placeholder="輸入配置名稱"
+                placeholderTextColor={Colors.textMuted}
               />
             </View>
-            {!goldenRangeValid && <Text style={styles.errorText}>金寶寶下界不可大於上界</Text>}
-          </>
+
+            <View style={styles.fieldRow}>
+              <View style={styles.fieldBlock}>
+                <Text style={styles.fieldLabel}>玩家人數</Text>
+                <TextInput
+                  value={String(playerCount)}
+                  onChangeText={text => setPlayerCount(clampCount(text, playerCount))}
+                  keyboardType="number-pad"
+                  style={styles.input}
+                  maxLength={2}
+                />
+              </View>
+              <View style={styles.ruleBox}>
+                <Text style={styles.ruleText}>
+                  {gameMode === 'dual' ? '雙身分：玩家人數 x 2' : '單身分：玩家人數'}
+                  {thiefExtraCards > 0 ? '，盜賊額外 +2 張' : ''}
+                </Text>
+              </View>
+            </View>
+
+            {gameMode === 'single' && (
+              <View style={styles.winRuleBox}>
+                <Text style={styles.fieldLabel}>勝利條件</Text>
+                <View style={styles.winRuleRow}>
+                  <TouchableOpacity
+                    style={[styles.winRuleBtn, singleWinRule === 'edge' && styles.winRuleBtnActive]}
+                    onPress={() => setSingleWinRule('edge')}
+                    activeOpacity={0.75}
+                  >
+                    <Text style={[styles.winRuleText, singleWinRule === 'edge' && styles.winRuleTextActive]}>屠邊</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.winRuleBtn, singleWinRule === 'city' && styles.winRuleBtnActive]}
+                    onPress={() => setSingleWinRule('city')}
+                    activeOpacity={0.75}
+                  >
+                    <Text style={[styles.winRuleText, singleWinRule === 'city' && styles.winRuleTextActive]}>屠城</Text>
+                  </TouchableOpacity>
+                </View>
+                <Text style={styles.winRuleHint}>
+                  {singleWinRule === 'edge'
+                    ? '神職或平民全滅時狼人勝利；狼人全滅時好人勝利'
+                    : '好人全滅時狼人勝利；狼人全滅時好人勝利'}
+                </Text>
+              </View>
+            )}
+
+            {gameMode === 'dual' && (
+              <>
+                <View style={styles.goldenBox}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.fieldLabel}>金寶寶人數範圍</Text>
+                    <Text style={styles.goldenHint}>金寶寶不算角色牌，僅放入配置數量</Text>
+                  </View>
+                  <TextInput
+                    value={String(goldenBabyConfig.min)}
+                    onChangeText={setGoldenMin}
+                    keyboardType="number-pad"
+                    style={styles.smallInput}
+                    maxLength={2}
+                  />
+                  <Text style={styles.rangeDash}>-</Text>
+                  <TextInput
+                    value={String(goldenBabyConfig.max)}
+                    onChangeText={setGoldenMax}
+                    keyboardType="number-pad"
+                    style={styles.smallInput}
+                    maxLength={2}
+                  />
+                </View>
+                {!goldenRangeValid && <Text style={styles.errorText}>金寶寶範圍錯誤</Text>}
+              </>
+            )}
+          </View>
         )}
       </View>
 
       <View style={styles.tabBar}>
         {TAB_CONFIG.map(tab => {
           const isActive = activeTab === tab.key;
-          const tabCount = TAB_ROLES[tab.key].reduce((sum, r) => sum + getCount(r.id), 0);
+          const tabRoles = TAB_ROLES[tab.key].filter(role => gameMode === 'single' || !SINGLE_ONLY_ROLE_IDS.has(role.id));
+          const tabCount = tabRoles.reduce((sum, r) => sum + getCount(r.id), 0);
           return (
             <TouchableOpacity
               key={tab.key}
@@ -247,12 +285,9 @@ export default function SetupScreen() {
             onPress={handleNext}
             disabled={!canNext}
           >
-            <Text style={styles.nextBtnText}>
-              {playerCount < 4 ? '至少 4 人' : missingCards > 0 ? `仍缺 ${missingCards} 張` : !goldenRangeValid ? '檢查金寶寶' : '下一步'}
-            </Text>
+            <Text style={styles.nextBtnText}>（{roleCardCount}/{requiredCards}，繼續）</Text>
           </TouchableOpacity>
         </View>
-        <Text style={styles.footerInfo}>玩家 {playerCount} 人 · 角色牌 {roleCardCount}/{requiredCards}</Text>
       </View>
     </View>
   );
@@ -267,6 +302,20 @@ const styles = StyleSheet.create({
     padding: 12,
     gap: 8,
   },
+  detailToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: Colors.background,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: Colors.surfaceLight,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  detailToggleText: { color: Colors.text, fontSize: 14, fontWeight: 'bold' },
+  detailToggleMeta: { color: Colors.primary, fontSize: 12, fontWeight: 'bold' },
+  detailBody: { gap: 8 },
   configNameBox: { gap: 4 },
   fieldRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   fieldBlock: { width: 92, gap: 4 },
@@ -294,6 +343,30 @@ const styles = StyleSheet.create({
   statusSub: { color: Colors.textDim, fontSize: 12, marginTop: 2 },
   ruleBox: { backgroundColor: Colors.background, borderRadius: 8, padding: 8 },
   ruleText: { color: Colors.textDim, fontSize: 12 },
+  winRuleBox: {
+    backgroundColor: Colors.background,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: Colors.surfaceLight,
+    padding: 10,
+    gap: 8,
+  },
+  winRuleRow: { flexDirection: 'row', gap: 8 },
+  winRuleBtn: {
+    flex: 1,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: Colors.surfaceLight,
+    paddingVertical: 9,
+    alignItems: 'center',
+  },
+  winRuleBtnActive: {
+    borderColor: Colors.primary,
+    backgroundColor: 'rgba(255, 193, 7, 0.12)',
+  },
+  winRuleText: { color: Colors.textDim, fontSize: 13, fontWeight: 'bold' },
+  winRuleTextActive: { color: Colors.primary },
+  winRuleHint: { color: Colors.textDim, fontSize: 11, lineHeight: 16 },
   goldenBox: { flexDirection: 'row', alignItems: 'center', gap: 7 },
   goldenHint: { color: Colors.textDim, fontSize: 11, marginTop: 2 },
   smallInput: {

@@ -362,7 +362,7 @@ export default function DayScreen() {
   const dayPhaseUpperDeadPlayers = [
     ...new Set([...upperDeadPlayers, ...nightChainDeaths]),
   ];
-  const dayChainDeaths = [...new Set(dayDeathRounds.flat())];
+  const dayChainDeaths = dayDeathRounds.flat();
   const extraDirectDayDeathRounds = [
     ...knightDuelKills,
     ...(bmHunterResolved && bmHunterTarget !== null ? [bmHunterTarget] : []),
@@ -395,10 +395,11 @@ export default function DayScreen() {
     nightChainDeaths,
   );
   const dreamwalkerCarryDeaths = resolvedDayDeaths.filter(p => !directDayDeaths.includes(p));
-  const previewDeaths = [...new Set([
+  const previewDeaths = [
     ...nightChainDeaths,
-    ...resolvedDayDeaths,
-  ])];
+    ...directDayDeaths,
+    ...dreamwalkerCarryDeaths,
+  ];
   const previewDeathState = projectDeathState(
     gameMode,
     deadPlayers,
@@ -549,7 +550,7 @@ export default function DayScreen() {
           gameMode,
           deadPlayers,
           upperDeadPlayers,
-          [...new Set([...previewDeaths, ...extraDeaths])],
+          [...previewDeaths, ...extraDeaths],
         )
       : previewDeathState;
     return computeWinResult({

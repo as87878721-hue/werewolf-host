@@ -39,7 +39,8 @@ export default function DayScreen() {
     singleWinRule, winResult,
     sheriffPlayer, lostVotePlayers, idiotFlippedPlayers,
     cupidLovers, bishopHolder, knightUsed, goldenBabyPlayers, monkVoteTarget, slaveTraderSlaves, fireWolfBurnedPlayers,
-    setSheriff, endDay, setBishopHolder, setKnightUsed, setRoleMembers, setPlayerCardRole, setNightStep, setMonkVoteTarget, setMonkVoteCard,
+    setSheriff, endDay, setBishopHolder, setKnightUsed, setRoleMembers, setPlayerCardRole, setNightStep,
+    setMonkVoteTarget, setMonkVoteCard, captureDayStepSnapshot, restoreDayStepSnapshot,
   } = useGameStore();
 
   const isDualMode = gameMode === 'dual';
@@ -147,7 +148,8 @@ export default function DayScreen() {
   const [step, setStep] = useState(0);
 
   const clearDayStepState = (fromStep: number) => {
-    if (fromStep >= 0) {
+    restoreDayStepSnapshot(fromStep);
+    if (fromStep === 0) {
       setBadgeAction(null);
       setBadgeRecipient(null);
       setLocalSheriff(() => {
@@ -290,6 +292,10 @@ export default function DayScreen() {
   const [bmWolfKingTarget, setBmWolfKingTarget] = useState<number | null>(null);
   const [bmWolfKingResolved, setBmWolfKingResolved] = useState(false);
   const [dayResolvedWinResult, setDayResolvedWinResult] = useState<WinResult | null>(null);
+
+  useEffect(() => {
+    captureDayStepSnapshot(step);
+  }, [captureDayStepSnapshot, step]);
 
   useEffect(() => {
     navigation.setOptions({

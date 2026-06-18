@@ -321,6 +321,8 @@ interface GameState {
   singleWinRule: SingleWinRule;
   winResult: WinResult | null;
   gameLog: GameLogEntry[];
+  nightStepSnapshots: Record<number, GameUndoSnapshot>;
+  dayStepSnapshots: Record<number, GameUndoSnapshot>;
   configName: string;
   lastConfigs: Partial<Record<GameMode, GameConfigSnapshot>>;
   savedConfigs: Partial<Record<GameMode, GameConfigSnapshot[]>>;
@@ -341,6 +343,9 @@ interface GameState {
   moveOrderDown: (index: number) => void;
   reorderNightOrder: (newOrder: string[]) => void;
   recordAction: (action: NightAction) => void;
+  captureNightStepSnapshot: (step: number) => void;
+  captureDayStepSnapshot: (step: number) => void;
+  restoreDayStepSnapshot: (step: number) => void;
   nextStep: () => void;
   prevStep: () => void;
   rewindNightStep: (step: number) => void;
@@ -362,6 +367,122 @@ interface GameState {
     dayKills?: number[];
   }) => void;
   transformThief: (players: number[], roleId: string) => void;
+}
+
+interface GameUndoSnapshot {
+  nightActions: NightAction[];
+  saveUsed: boolean;
+  poisonUsed: boolean;
+  sharpshooterUsed: boolean;
+  checkedPlayers: Record<number, 'wolf' | 'good'>;
+  roleMembersMap: Record<string, number[]>;
+  deadPlayers: number[];
+  upperDeadPlayers: number[];
+  playerCardMap: Record<number, { upper?: string; lower?: string }>;
+  sheriffPlayer: number | null;
+  lostVotePlayers: number[];
+  idiotFlippedPlayers: number[];
+  anubisScaledPlayers: number[];
+  cupidLovers: [number, number] | null;
+  bishopHolder: number | null;
+  knightUsed: boolean;
+  lastDayExileInfo: { player: number; upperWasAlive: boolean } | null;
+  lastDayExiledRoleId: string | null;
+  slaveTraderSlaves: number[];
+  fireWolfBurnedPlayers: number[];
+  fireWolfBurnedCards: Array<{ player: number; slot: 'upper' | 'lower' }>;
+  fireWolfUsed: boolean;
+  spiritWolfMimic: { target: number; roleId: string; availableNight: number } | null;
+  spiritWolfSaveUsed: boolean;
+  spiritWolfPoisonUsed: boolean;
+  mummySealedRoles: string[];
+  monkVoteTarget: number | null;
+  monkVoteCard: { player: number; slot: 'upper' | 'lower' } | null;
+  goldenBabyPlayers: number[];
+  winResult: WinResult | null;
+  gameLog: GameLogEntry[];
+}
+
+function createGameUndoSnapshot(state: GameState): GameUndoSnapshot {
+  const cloneRoleMembersMap = Object.fromEntries(
+    Object.entries(state.roleMembersMap).map(([roleId, members]) => [roleId, [...members]]),
+  );
+  const clonePlayerCardMap = Object.fromEntries(
+    Object.entries(state.playerCardMap).map(([player, cards]) => [Number(player), { ...cards }]),
+  );
+  return {
+    nightActions: state.nightActions.map(action => ({ ...action })),
+    saveUsed: state.saveUsed,
+    poisonUsed: state.poisonUsed,
+    sharpshooterUsed: state.sharpshooterUsed,
+    checkedPlayers: { ...state.checkedPlayers },
+    roleMembersMap: cloneRoleMembersMap,
+    deadPlayers: [...state.deadPlayers],
+    upperDeadPlayers: [...state.upperDeadPlayers],
+    playerCardMap: clonePlayerCardMap,
+    sheriffPlayer: state.sheriffPlayer,
+    lostVotePlayers: [...state.lostVotePlayers],
+    idiotFlippedPlayers: [...state.idiotFlippedPlayers],
+    anubisScaledPlayers: [...state.anubisScaledPlayers],
+    cupidLovers: state.cupidLovers ? [...state.cupidLovers] as [number, number] : null,
+    bishopHolder: state.bishopHolder,
+    knightUsed: state.knightUsed,
+    lastDayExileInfo: state.lastDayExileInfo ? { ...state.lastDayExileInfo } : null,
+    lastDayExiledRoleId: state.lastDayExiledRoleId,
+    slaveTraderSlaves: [...state.slaveTraderSlaves],
+    fireWolfBurnedPlayers: [...state.fireWolfBurnedPlayers],
+    fireWolfBurnedCards: state.fireWolfBurnedCards.map(card => ({ ...card })),
+    fireWolfUsed: state.fireWolfUsed,
+    spiritWolfMimic: state.spiritWolfMimic ? { ...state.spiritWolfMimic } : null,
+    spiritWolfSaveUsed: state.spiritWolfSaveUsed,
+    spiritWolfPoisonUsed: state.spiritWolfPoisonUsed,
+    mummySealedRoles: [...state.mummySealedRoles],
+    monkVoteTarget: state.monkVoteTarget,
+    monkVoteCard: state.monkVoteCard ? { ...state.monkVoteCard } : null,
+    goldenBabyPlayers: [...state.goldenBabyPlayers],
+    winResult: state.winResult ? { ...state.winResult } : null,
+    gameLog: state.gameLog.map(log => ({ ...log })),
+  };
+}
+
+function restoreGameUndoSnapshot(snapshot: GameUndoSnapshot) {
+  return {
+    nightActions: snapshot.nightActions.map(action => ({ ...action })),
+    saveUsed: snapshot.saveUsed,
+    poisonUsed: snapshot.poisonUsed,
+    sharpshooterUsed: snapshot.sharpshooterUsed,
+    checkedPlayers: { ...snapshot.checkedPlayers },
+    roleMembersMap: Object.fromEntries(
+      Object.entries(snapshot.roleMembersMap).map(([roleId, members]) => [roleId, [...members]]),
+    ),
+    deadPlayers: [...snapshot.deadPlayers],
+    upperDeadPlayers: [...snapshot.upperDeadPlayers],
+    playerCardMap: Object.fromEntries(
+      Object.entries(snapshot.playerCardMap).map(([player, cards]) => [Number(player), { ...cards }]),
+    ),
+    sheriffPlayer: snapshot.sheriffPlayer,
+    lostVotePlayers: [...snapshot.lostVotePlayers],
+    idiotFlippedPlayers: [...snapshot.idiotFlippedPlayers],
+    anubisScaledPlayers: [...snapshot.anubisScaledPlayers],
+    cupidLovers: snapshot.cupidLovers ? [...snapshot.cupidLovers] as [number, number] : null,
+    bishopHolder: snapshot.bishopHolder,
+    knightUsed: snapshot.knightUsed,
+    lastDayExileInfo: snapshot.lastDayExileInfo ? { ...snapshot.lastDayExileInfo } : null,
+    lastDayExiledRoleId: snapshot.lastDayExiledRoleId,
+    slaveTraderSlaves: [...snapshot.slaveTraderSlaves],
+    fireWolfBurnedPlayers: [...snapshot.fireWolfBurnedPlayers],
+    fireWolfBurnedCards: snapshot.fireWolfBurnedCards.map(card => ({ ...card })),
+    fireWolfUsed: snapshot.fireWolfUsed,
+    spiritWolfMimic: snapshot.spiritWolfMimic ? { ...snapshot.spiritWolfMimic } : null,
+    spiritWolfSaveUsed: snapshot.spiritWolfSaveUsed,
+    spiritWolfPoisonUsed: snapshot.spiritWolfPoisonUsed,
+    mummySealedRoles: [...snapshot.mummySealedRoles],
+    monkVoteTarget: snapshot.monkVoteTarget,
+    monkVoteCard: snapshot.monkVoteCard ? { ...snapshot.monkVoteCard } : null,
+    goldenBabyPlayers: [...snapshot.goldenBabyPlayers],
+    winResult: snapshot.winResult ? { ...snapshot.winResult } : null,
+    gameLog: snapshot.gameLog.map(log => ({ ...log })),
+  };
 }
 
 export const useGameStore = create<GameState>((set, get) => ({
@@ -405,6 +526,8 @@ export const useGameStore = create<GameState>((set, get) => ({
   singleWinRule: DEFAULT_SINGLE_CONFIG.singleWinRule,
   winResult: null,
   gameLog: [],
+  nightStepSnapshots: {},
+  dayStepSnapshots: {},
   configName: DEFAULT_SINGLE_CONFIG.name,
   lastConfigs: {},
   savedConfigs: {},
@@ -431,6 +554,8 @@ export const useGameStore = create<GameState>((set, get) => ({
     nightOrder: [],
     currentStep: 0,
     nightActions: [],
+    nightStepSnapshots: {},
+    dayStepSnapshots: {},
     roleMembersMap: {},
     playerCardMap: {},
     deadPlayers: [],
@@ -626,6 +751,45 @@ export const useGameStore = create<GameState>((set, get) => ({
     get().appendLog('夜晚技能', `${role?.name ?? action.roleId}：${actorText}`);
   },
 
+  captureNightStepSnapshot: (step) => {
+    set(state => {
+      if (state.nightStepSnapshots[step]) return {};
+      return {
+        nightStepSnapshots: {
+          ...state.nightStepSnapshots,
+          [step]: createGameUndoSnapshot(state),
+        },
+      };
+    });
+  },
+
+  captureDayStepSnapshot: (step) => {
+    set(state => {
+      if (state.dayStepSnapshots[step]) return {};
+      return {
+        dayStepSnapshots: {
+          ...state.dayStepSnapshots,
+          [step]: createGameUndoSnapshot(state),
+        },
+      };
+    });
+  },
+
+  restoreDayStepSnapshot: (step) => {
+    set(state => {
+      const snapshot = state.dayStepSnapshots[step];
+      if (!snapshot) return {};
+      const nextSnapshots = { ...state.dayStepSnapshots };
+      for (const key of Object.keys(nextSnapshots)) {
+        if (Number(key) >= step) delete nextSnapshots[Number(key)];
+      }
+      return {
+        ...restoreGameUndoSnapshot(snapshot),
+        dayStepSnapshots: nextSnapshots,
+      };
+    });
+  },
+
   nextStep: () => {
     const { currentStep, nightOrder } = get();
     set({ currentStep: Math.min(currentStep + 1, nightOrder.length) });
@@ -639,6 +803,18 @@ export const useGameStore = create<GameState>((set, get) => ({
   rewindNightStep: (step) => {
     set(state => {
       const safeStep = Math.max(0, Math.min(step, state.nightOrder.length));
+      const snapshot = state.nightStepSnapshots[safeStep];
+      if (snapshot) {
+        const nextSnapshots = { ...state.nightStepSnapshots };
+        for (const key of Object.keys(nextSnapshots)) {
+          if (Number(key) >= safeStep) delete nextSnapshots[Number(key)];
+        }
+        return {
+          ...restoreGameUndoSnapshot(snapshot),
+          currentStep: safeStep,
+          nightStepSnapshots: nextSnapshots,
+        };
+      }
       const clearedRoleIds = state.nightOrder.slice(safeStep);
       const clearedRoleNames = new Set(clearedRoleIds.map(roleId => ROLES.find(role => role.id === roleId)?.name ?? roleId));
       const clearedRoleIdSet = new Set(clearedRoleIds);
@@ -660,6 +836,9 @@ export const useGameStore = create<GameState>((set, get) => ({
         nightActions: state.nightActions.slice(0, safeStep),
         roleMembersMap: nextRoleMembersMap,
         playerCardMap: nextCardMap,
+        nightStepSnapshots: Object.fromEntries(
+          Object.entries(state.nightStepSnapshots).filter(([snapshotStep]) => Number(snapshotStep) < safeStep),
+        ),
         gameLog: state.gameLog.filter(log => {
           if (log.night !== state.currentNight || log.phase !== '夜晚技能') return true;
           return ![...clearedRoleNames].some(roleName => log.text.startsWith(`${roleName}：`));
@@ -757,6 +936,8 @@ export const useGameStore = create<GameState>((set, get) => ({
         currentNight: state.currentNight + 1,
         currentStep: 0,
         nightActions: [],
+        nightStepSnapshots: {},
+        dayStepSnapshots: {},
         deadPlayers: nextDead,
         upperDeadPlayers: nextUpperDead,
         winResult,
@@ -775,7 +956,15 @@ export const useGameStore = create<GameState>((set, get) => ({
         fireWolfBurnedPlayers,
         resolutionPhase: 'night',
       });
-      set(state => ({ currentNight: state.currentNight + 1, currentStep: 0, nightActions: [], deadPlayers: allDead, winResult }));
+      set(state => ({
+        currentNight: state.currentNight + 1,
+        currentStep: 0,
+        nightActions: [],
+        nightStepSnapshots: {},
+        dayStepSnapshots: {},
+        deadPlayers: allDead,
+        winResult,
+      }));
     }
   },
 
@@ -790,6 +979,8 @@ export const useGameStore = create<GameState>((set, get) => ({
       currentStep: 0,
       nightActions: [],
       nightHistory: [],
+      nightStepSnapshots: {},
+      dayStepSnapshots: {},
       saveUsed: false,
       poisonUsed: false,
       sharpshooterUsed: false,
@@ -934,6 +1125,8 @@ export const useGameStore = create<GameState>((set, get) => ({
         currentNight: state.currentNight + 1,
         currentStep: 0,
         nightActions: [],
+        nightStepSnapshots: {},
+        dayStepSnapshots: {},
         saveUsed: false,
         poisonUsed: false,
         sharpshooterUsed: newSharpshooterUsed,
@@ -963,6 +1156,8 @@ export const useGameStore = create<GameState>((set, get) => ({
         currentNight: state.currentNight + 1,
         currentStep: 0,
         nightActions: [],
+        nightStepSnapshots: {},
+        dayStepSnapshots: {},
         saveUsed: false,
         poisonUsed: false,
         sharpshooterUsed: newSharpshooterUsed,

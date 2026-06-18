@@ -88,7 +88,7 @@ export default function NightScreen() {
     winResult,
     lastDayExileInfo, lastDayExiledRoleId, sharpshooterUsed, anubisScaledPlayers, cupidLovers,
     goldenBabyConfig, goldenBabyPlayers, spiritWolfMimic, spiritWolfSaveUsed, spiritWolfPoisonUsed, mummySealedRoles, monkVoteTarget, monkVoteCard, fireWolfBurnedPlayers, fireWolfBurnedCards, fireWolfUsed, slaveTraderSlaves,
-    recordAction, nextStep, prevStep, rewindNightStep, finishNight, resetNight, setRoleMembers, transformThief, setGoldenBabyPlayers,
+    recordAction, captureNightStepSnapshot, nextStep, prevStep, rewindNightStep, finishNight, resetNight, setRoleMembers, transformThief, setGoldenBabyPlayers,
   } = useGameStore();
   const isDualMode = gameMode === 'dual';
   const { width } = useWindowDimensions();
@@ -587,6 +587,7 @@ export default function NightScreen() {
 
   // ── 完成此步驟 ──
   const handleNext = () => {
+    captureNightStepSnapshot(currentStep);
     if (roleId === 'golden_baby') {
       if (selectedRoleMembers.length < goldenBabyConfig.min || selectedRoleMembers.length > goldenBabyConfig.max) return;
       setGoldenBabyPlayers(selectedRoleMembers);

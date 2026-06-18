@@ -2,7 +2,7 @@
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView, useWindowDimensions,
 } from 'react-native';
-import { useNavigation } from '@react-navigation/native';
+import { CommonActions, useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../../App';
 import { Colors } from '../theme/colors';
@@ -147,6 +147,15 @@ export default function DayScreen() {
   const [step, setStep] = useState(0);
 
   const clearDayStepState = (fromStep: number) => {
+    if (fromStep >= 0) {
+      setBadgeAction(null);
+      setBadgeRecipient(null);
+      setLocalSheriff(() => {
+        if (!sheriffPlayer) return null;
+        if (nightChainDeaths.includes(sheriffPlayer) || deadPlayers.includes(sheriffPlayer)) return null;
+        return sheriffPlayer;
+      });
+    }
     if (fromStep >= 4) {
       setExileBadgeAction(null);
       setExileBadgeRecipient(null);
@@ -162,6 +171,9 @@ export default function DayScreen() {
     if (fromStep >= 3) {
       setExiledPlayer(null);
       setMonkVoteMode(false);
+      setDayDeathRounds([]);
+      setHandledDayDeathSkills([]);
+      setDayDeathSkillTarget(null);
     }
     if (fromStep >= 2) {
       setPendingSelfDestruct(null);
@@ -188,6 +200,8 @@ export default function DayScreen() {
       setKnightEndsDay(false);
     }
     if (fromStep >= 1) {
+      setNightDeathRounds(initialNightDeathRounds);
+      setHandledNightDeathSkills([]);
       setNightDeathSkillTarget(null);
       setNightDeathSkillBlocked(null);
       setNightDeathBadgeAction(null);
@@ -207,7 +221,7 @@ export default function DayScreen() {
               setNightStep(Math.max(nightOrder.length - 1, 0));
               navigation.goBack();
             } else {
-              clearDayStepState(step);
+              clearDayStepState(step - 1);
               setStep(previous => Math.max(previous - 1, 0));
             }
           }}
@@ -1888,8 +1902,13 @@ export default function DayScreen() {
   };
 
   // ── Navigation ─────────────────────────────────────────────────────────
+  const goHome = () => navigation.dispatch(CommonActions.reset({ index: 0, routes: [{ name: 'Home' }] }));
+
   const handleNext = () => {
-    if (displayedWinResult) return;
+    if (displayedWinResult) {
+      goHome();
+      return;
+    }
 
     if (pendingDayDeathSkill) {
       if (dayDeathSkillTarget !== null) {
@@ -2059,7 +2078,7 @@ export default function DayScreen() {
   };
 
   const canAdvance = (): boolean => {
-    if (displayedWinResult) return false;
+    if (displayedWinResult) return true;
     if (pendingDayDeathSkill) return true;
     if (step === 0 && sheriffDiedLastNight) {
       return badgeAction === 'tear' || (badgeAction === 'handover' && badgeRecipient !== null);

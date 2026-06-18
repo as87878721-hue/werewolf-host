@@ -158,8 +158,8 @@ export function computeWinResult({
     .reduce((sum, role) => sum + role.count, 0);
 
     const allWolfCardsRevealed =
-    expectedWolfCardCount > 0 &&
-    wolfCards.length === expectedWolfCardCount &&
+    wolfCards.length > 0 &&
+    (expectedWolfCardCount === 0 || wolfCards.length === expectedWolfCardCount) &&
     wolfCards.every(card =>
       card.slot === 'upper'
         ? upperDeadPlayers.includes(card.player) || deadPlayers.includes(card.player)
@@ -1952,4 +1952,3 @@ function buildNightSummary(
   lines.push(summaryDeaths.length === 0 ? '✨ 本晚平安，無人死亡' : `💀 本晚死亡：${summaryDeaths.map(fmt).join('、')}`);
   return lines;
 }
-

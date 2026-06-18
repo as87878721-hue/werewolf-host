@@ -1,6 +1,6 @@
 ﻿import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, useWindowDimensions } from 'react-native';
-import { useNavigation } from '@react-navigation/native';
+import { CommonActions, useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../../App';
 import { Colors } from '../theme/colors';
@@ -88,7 +88,7 @@ export default function NightScreen() {
     winResult,
     lastDayExileInfo, lastDayExiledRoleId, sharpshooterUsed, anubisScaledPlayers, cupidLovers,
     goldenBabyConfig, goldenBabyPlayers, spiritWolfMimic, spiritWolfSaveUsed, spiritWolfPoisonUsed, mummySealedRoles, monkVoteTarget, monkVoteCard, fireWolfBurnedPlayers, fireWolfBurnedCards, fireWolfUsed, slaveTraderSlaves,
-    recordAction, nextStep, prevStep, rewindNightStep, finishNight, setRoleMembers, transformThief, setGoldenBabyPlayers,
+    recordAction, nextStep, prevStep, rewindNightStep, finishNight, resetNight, setRoleMembers, transformThief, setGoldenBabyPlayers,
   } = useGameStore();
   const isDualMode = gameMode === 'dual';
   const { width } = useWindowDimensions();
@@ -319,6 +319,7 @@ export default function NightScreen() {
   const witchHasActed = nightActions.some(action => action.roleId === 'witch');
   const deathAbilityStatusPending =
     (roleId === 'hunter' || roleId === 'wolf_king') &&
+    !sealedByMummy &&
     witchIsInGame &&
     !witchHasActed;
   const deathAbilityStatuses = (roleId === 'hunter' || roleId === 'wolf_king')
@@ -381,7 +382,9 @@ export default function NightScreen() {
     return cw < ccw ? 'clockwise' : 'counterclockwise';
   })();
   const mummyNightIndex = nightOrder.indexOf('mummy');
+  const selectedRoleIdSet = new Set(selectedRoles.filter(entry => entry.count > 0).map(entry => entry.roleId));
   const mummyRoleOptions = ROLES.filter(r =>
+    selectedRoleIdSet.has(r.id) &&
     r.team === 'village' &&
     r.id !== 'villager' &&
     r.id !== 'wild_child' &&
@@ -892,6 +895,7 @@ export default function NightScreen() {
       })
     : null;
   const displayedWinResult = previewNightWinResult ?? winResult;
+  const goHome = () => navigation.dispatch(CommonActions.reset({ index: 0, routes: [{ name: 'Home' }] }));
 
   // ── 完成夜晚畫面 ──
   if (isDone) {
@@ -913,8 +917,22 @@ export default function NightScreen() {
             <Text style={styles.winReason}>{displayedWinResult.reason}</Text>
           </View>
         )}
-        <TouchableOpacity style={styles.doneBtn} onPress={() => { finishNight(); navigation.navigate('Day'); }}>
-          <Text style={styles.doneBtnText}>☀️ 進入白天 →</Text>
+        <TouchableOpacity
+          style={styles.doneBtn}
+          onPress={() => {
+            if (displayedWinResult) {
+              if (previewNightWinResult) {
+                finishNight();
+                resetNight();
+              }
+              goHome();
+              return;
+            }
+            finishNight();
+            navigation.navigate('Day');
+          }}
+        >
+          <Text style={styles.doneBtnText}>{displayedWinResult ? '遊戲已結束，回首頁' : '☀️ 進入白天 →'}</Text>
         </TouchableOpacity>
       </View>
     );
@@ -1103,7 +1121,7 @@ export default function NightScreen() {
         )}
 
         {/* 獵人／狼王死亡技能狀態 */}
-        {canUseRoleSkill && (roleId === 'hunter' || roleId === 'wolf_king') && (
+        {skillMembersRaw.length > 0 && (roleId === 'hunter' || roleId === 'wolf_king') && (
           deathAbilityStatusPending ? (
             <View style={[styles.infoCard, { borderColor: Colors.warning }]}>
               <Text style={[styles.infoCardTitle, { color: Colors.warning }]}>⏳ 女巫尚未行動</Text>
@@ -1386,9 +1404,9 @@ export default function NightScreen() {
         )}
 
         <TouchableOpacity
-          style={[styles.nextBtn, (goldenBabyCountInvalid || displayedWinResult) && styles.nextBtnDisabled]}
-          onPress={handleNext}
-          disabled={goldenBabyCountInvalid || !!displayedWinResult}
+          style={[styles.nextBtn, goldenBabyCountInvalid && styles.nextBtnDisabled]}
+          onPress={displayedWinResult ? goHome : handleNext}
+          disabled={goldenBabyCountInvalid}
         >
           <Text style={styles.nextBtnText}>
             {displayedWinResult

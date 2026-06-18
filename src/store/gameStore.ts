@@ -153,12 +153,19 @@ export function computeWinResult({
         cards.lower && roleTeam(cards.lower) === 'wolf' ? { player, slot: 'lower' as const } : null,
       ]).filter((card): card is { player: number; slot: 'upper' | 'lower' } => Boolean(card));
     });
+    const expectedWolfCardCount = selectedRoles
+    .filter(role => roleTeam(role.roleId) === 'wolf')
+    .reduce((sum, role) => sum + role.count, 0);
 
-    const allWolfCardsRevealed = wolfCards.length > 0 && wolfCards.every(card =>
+    const allWolfCardsRevealed =
+    expectedWolfCardCount > 0 &&
+    wolfCards.length === expectedWolfCardCount &&
+    wolfCards.every(card =>
       card.slot === 'upper'
         ? upperDeadPlayers.includes(card.player) || deadPlayers.includes(card.player)
         : deadPlayers.includes(card.player)
     );
+
     const allGoldenBabiesDead = goldenBabyPlayers.length > 0 && goldenBabyPlayers.every(p => deadPlayers.includes(p));
     if (allWolfCardsRevealed && allGoldenBabiesDead) {
       return resolutionPhase === 'night'
@@ -178,6 +185,9 @@ export function computeWinResult({
 
   const selectedRoleDefs = ROLES.filter(role => selectedRoleIds.has(role.id));
   const wolfRoleIds = selectedRoleDefs.filter(role => role.team === 'wolf').map(role => role.id);
+  const expectedWolfCount = selectedRoles
+    .filter(role => wolfRoleIds.includes(role.roleId))
+    .reduce((sum, role) => sum + role.count, 0);
   const godRoleIds = selectedRoleDefs
     .filter(role => role.team === 'village' && !VILLAGER_LIKE_IDS.has(role.id) && !EXTRA_OPTION_IDS.has(role.id))
     .map(role => role.id);
@@ -195,7 +205,7 @@ export function computeWinResult({
   const goodPlayers = uniqueNums([...godPlayers, ...villagerPlayers]);
   const allDead = (players: number[]) => players.length > 0 && players.every(p => deadPlayers.includes(p));
 
-  if (allDead(wolfPlayers)) {
+  if (expectedWolfCount > 0 && wolfPlayers.length >= expectedWolfCount && allDead(wolfPlayers)) {
     return { winner: 'village', reason: '所有狼人陣營玩家死亡' };
   }
 

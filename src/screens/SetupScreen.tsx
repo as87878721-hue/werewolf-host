@@ -62,7 +62,7 @@ export default function SetupScreen() {
   const requiredCards = baseRequiredCards + thiefExtraCards;
   const missingCards = Math.max(0, requiredCards - roleCardCount);
   const goldenRangeValid = gameMode === 'single' || goldenBabyConfig.min <= goldenBabyConfig.max;
-  const canNext = playerCount >= 4 && roleCardCount >= requiredCards && goldenRangeValid;
+  const canNext = playerCount >= 4 && roleCardCount === requiredCards && goldenRangeValid;
 
   const toggleDesc = (id: string) =>
     setExpanded(prev => {

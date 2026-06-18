@@ -157,6 +157,7 @@ export default function DayScreen() {
       });
     }
     if (fromStep >= 4) {
+      setDayResolvedWinResult(null);
       setExileBadgeAction(null);
       setExileBadgeRecipient(null);
       setExileBadgeResolved(false);
@@ -169,13 +170,17 @@ export default function DayScreen() {
       setBmWolfKingResolved(false);
     }
     if (fromStep >= 3) {
+      setDayResolvedWinResult(null);
       setExiledPlayer(null);
       setMonkVoteMode(false);
+      setMonkVoteTarget(null);
+      setMonkVoteCard(null);
       setDayDeathRounds([]);
       setHandledDayDeathSkills([]);
       setDayDeathSkillTarget(null);
     }
     if (fromStep >= 2) {
+      setDayResolvedWinResult(null);
       setPendingSelfDestruct(null);
       setLastWordsPlayer(null);
       setSpeechDeaths([]);
@@ -200,6 +205,7 @@ export default function DayScreen() {
       setKnightEndsDay(false);
     }
     if (fromStep >= 1) {
+      setDayResolvedWinResult(null);
       setNightDeathRounds(initialNightDeathRounds);
       setHandledNightDeathSkills([]);
       setNightDeathSkillTarget(null);
@@ -212,26 +218,6 @@ export default function DayScreen() {
     }
   };
 
-  useEffect(() => {
-    navigation.setOptions({
-      headerLeft: () => (
-        <TouchableOpacity
-          onPress={() => {
-            if (step === 0) {
-              setNightStep(Math.max(nightOrder.length - 1, 0));
-              navigation.goBack();
-            } else {
-              clearDayStepState(step - 1);
-              setStep(previous => Math.max(previous - 1, 0));
-            }
-          }}
-          style={{ paddingHorizontal: 4, paddingVertical: 6 }}
-        >
-          <Text style={{ color: Colors.text, fontSize: 24 }}>{'<'}</Text>
-        </TouchableOpacity>
-      ),
-    });
-  }, [navigation, step, nightOrder.length, setNightStep]);
   // Sheriff
   const [localSheriff, setLocalSheriff] = useState<number | null>(() => {
     if (!sheriffPlayer) return null;
@@ -304,6 +290,65 @@ export default function DayScreen() {
   const [bmWolfKingTarget, setBmWolfKingTarget] = useState<number | null>(null);
   const [bmWolfKingResolved, setBmWolfKingResolved] = useState(false);
   const [dayResolvedWinResult, setDayResolvedWinResult] = useState<WinResult | null>(null);
+
+  useEffect(() => {
+    navigation.setOptions({
+      headerLeft: () => (
+        <TouchableOpacity
+          onPress={() => {
+            if (step === 0) {
+              setNightStep(Math.max(nightOrder.length - 1, 0));
+              navigation.goBack();
+            } else if (
+              step === 2 &&
+              (
+                pendingSelfDestruct !== null ||
+                lastWordsPlayer !== null ||
+                speechDeaths.length > 0 ||
+                dayDeathRounds.length > 0 ||
+                handledDayDeathSkills.length > 0 ||
+                knightDuelActive ||
+                knightDuelResolved ||
+                knightDuelKills.length > 0
+              )
+            ) {
+              clearDayStepState(2);
+            } else if (
+              step === 3 &&
+              (exiledPlayer !== null || monkVoteMode || monkVoteTarget !== null)
+            ) {
+              clearDayStepState(3);
+            } else if (step === 4) {
+              clearDayStepState(4);
+              setStep(3);
+            } else {
+              clearDayStepState(step - 1);
+              setStep(previous => Math.max(previous - 1, 0));
+            }
+          }}
+          style={{ paddingHorizontal: 4, paddingVertical: 6 }}
+        >
+          <Text style={{ color: Colors.text, fontSize: 24 }}>{'<'}</Text>
+        </TouchableOpacity>
+      ),
+    });
+  }, [
+    navigation,
+    step,
+    nightOrder.length,
+    setNightStep,
+    pendingSelfDestruct,
+    lastWordsPlayer,
+    speechDeaths,
+    dayDeathRounds,
+    handledDayDeathSkills,
+    knightDuelActive,
+    knightDuelResolved,
+    knightDuelKills,
+    exiledPlayer,
+    monkVoteMode,
+    monkVoteTarget,
+  ]);
 
   const dayPhaseUpperDeadPlayers = [
     ...new Set([...upperDeadPlayers, ...nightChainDeaths]),

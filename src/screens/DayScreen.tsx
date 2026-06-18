@@ -2313,6 +2313,7 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: 'row',
     alignItems: 'center',
+    flexWrap: 'wrap',
     gap: 10,
     paddingHorizontal: 16,
     paddingVertical: 10,

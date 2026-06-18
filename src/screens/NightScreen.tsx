@@ -1445,7 +1445,7 @@ const styles = StyleSheet.create({
   activeWinReason: { color: Colors.textDim, fontSize: 12, textAlign: 'center' },
 
   topHalf: { flex: 1, paddingHorizontal: 16, paddingTop: 8 },
-  roleRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 },
+  roleRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 8, marginBottom: 6 },
   roleEmoji: { fontSize: 26 },
   roleName: { color: Colors.text, fontSize: 15, fontWeight: 'bold' },
   modeLabel: { color: Colors.primary, fontSize: 11, marginTop: 1 },

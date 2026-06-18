@@ -148,8 +148,8 @@ const MENU_SIZE = 42;
 
 const styles = StyleSheet.create({
   root: {
-    position: 'relative',
     alignItems: 'flex-end',
+    minWidth: MENU_SIZE,
     zIndex: 20,
   },
   menuButton: {
@@ -164,9 +164,7 @@ const styles = StyleSheet.create({
   },
   menuText: { color: Colors.text, fontSize: 22, fontWeight: 'bold', lineHeight: 24 },
   dropdown: {
-    position: 'absolute',
-    top: MENU_SIZE + 8,
-    right: 0,
+    flexDirection: 'row',
     gap: 8,
     padding: 8,
     borderRadius: 999,
@@ -174,6 +172,8 @@ const styles = StyleSheet.create({
     borderColor: Colors.surfaceLight,
     backgroundColor: Colors.surface,
     alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 8,
     zIndex: 30,
   },
   roundButton: {

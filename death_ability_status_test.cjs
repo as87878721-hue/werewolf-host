@@ -83,6 +83,42 @@ expectEqual(
 );
 
 expectEqual(
+  'inactive dual identity mummy seal does not block hunter',
+  getNightDeathAbilityStatus(
+    7,
+    [{ roleId: 'mummy', members: [2], mummySealedRole: 'hunter' }],
+    { mummy: [2], hunter: [7] },
+    {
+      2: { upper: 'mummy', lower: 'villager' },
+      7: { upper: 'hunter' },
+    },
+    [2],
+    undefined,
+    null,
+    'dual',
+  ),
+  'can_trigger',
+);
+
+expectEqual(
+  'active dual identity mummy seal blocks hunter',
+  getNightDeathAbilityStatus(
+    7,
+    [{ roleId: 'mummy', members: [2], mummySealedRole: 'hunter' }],
+    { mummy: [2], hunter: [7] },
+    {
+      2: { upper: 'villager', lower: 'mummy' },
+      7: { upper: 'hunter' },
+    },
+    [2],
+    undefined,
+    null,
+    'dual',
+  ),
+  'sealed',
+);
+
+expectEqual(
   'living wolf king still sees that the death ability is available',
   getNightDeathAbilityStatus(
     5,

@@ -1522,6 +1522,31 @@ export interface DeathSkillTrigger {
   roleId: 'hunter' | 'wolf_king';
 }
 
+function hasActiveMummySeal(
+  actions: NightAction[],
+  sealedRoleId: string | undefined,
+  gameMode: GameMode,
+  roleMembersMap: Record<string, number[]> = {},
+  playerCardMap: Record<number, { upper?: string; lower?: string }> = {},
+  upperDeadPlayers: number[] = [],
+  deadPlayers: number[] = [],
+): boolean {
+  if (!sealedRoleId) return false;
+  return actions.some(action =>
+    action.roleId === 'mummy' &&
+    action.mummySealedRole === sealedRoleId &&
+    getActiveNightRoleMembers(
+      'mummy',
+      action.members,
+      gameMode,
+      roleMembersMap,
+      playerCardMap,
+      upperDeadPlayers,
+      deadPlayers,
+    ).length > 0
+  );
+}
+
 export function getActiveRoleAtPhaseStart(
   player: number,
   gameMode: GameMode,
@@ -1694,7 +1719,14 @@ export function getDeathSkillTriggers(
       playerCardMap,
       upperDeadPlayers,
     );
-    const sealedByMummy = timing === 'night' && actions.some(action => action.roleId === 'mummy' && action.mummySealedRole === roleId);
+    const sealedByMummy = timing === 'night' && hasActiveMummySeal(
+      actions,
+      roleId,
+      gameMode,
+      roleMembersMap,
+      playerCardMap,
+      upperDeadPlayers,
+    );
     if ((roleId === 'hunter' || roleId === 'wolf_king') && !poisonTargets.has(player) && !sealedByMummy) {
       triggers.push({ player, roleId });
     }
@@ -1728,7 +1760,14 @@ export function getNightDeathAbilityStatus(
     .filter((target): target is number => target !== undefined));
   const isPoisonDeath = deaths.includes(player) && effectivePoisonTargets.has(player);
   const activeRole = getActiveRoleAtPhaseStart(player, gameMode ?? 'single', roleMembersMap, playerCardMap, upperDeadPlayers);
-  const sealedByMummy = actions.some(action => action.roleId === 'mummy' && action.mummySealedRole === activeRole);
+  const sealedByMummy = hasActiveMummySeal(
+    actions,
+    activeRole,
+    gameMode ?? 'single',
+    roleMembersMap,
+    playerCardMap,
+    upperDeadPlayers,
+  );
   if (sealedByMummy) return 'sealed';
   return isPoisonDeath ? 'poisoned' : 'can_trigger';
 }

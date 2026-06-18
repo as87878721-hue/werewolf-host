@@ -124,7 +124,25 @@ export default function NightScreen() {
   const isDone = currentStep >= nightOrder.length;
   const roleId = nightOrder[currentStep];
   const role = ROLES.find(r => r.id === roleId);
-  const sealedByMummy = nightActions.some(a => a.roleId === 'mummy' && a.mummySealedRole === roleId);
+  const mummyInGame = selectedRoles.some(entry => entry.roleId === 'mummy' && entry.count > 0);
+  const effectiveNightActions = mummyInGame
+    ? nightActions
+    : nightActions.filter(action => action.roleId !== 'mummy');
+  const actionHasActiveMummy = (action: { members: number[] }) =>
+    getActiveNightRoleMembers(
+      'mummy',
+      action.members,
+      gameMode,
+      roleMembersMap,
+      playerCardMap,
+      upperDeadPlayers,
+      deadPlayers,
+    ).length > 0;
+  const sealedByMummy = effectiveNightActions.some(a =>
+    a.roleId === 'mummy' &&
+    actionHasActiveMummy(a) &&
+    a.mummySealedRole === roleId
+  );
   const roleConfig = ROLE_CONFIG[roleId] ?? { memberHint: '確認後繼續', actions: [] };
   const spiritMimicReady = spiritWolfMimic !== null && currentNight >= spiritWolfMimic.availableNight;
   const spiritAllowedActionKeys = (() => {
@@ -151,7 +169,7 @@ export default function NightScreen() {
   const maxMembers = roleId === 'golden_baby'
     ? goldenBabyConfig.max
     : selectedRoles.find(r => r.roleId === roleId)?.count ?? 1;
-  const currentMagicSwap = getMagicSwap(nightActions);
+  const currentMagicSwap = getMagicSwap(effectiveNightActions);
   const transformedThiefMembers = roleId === 'thief'
     ? nightHistory.flatMap(night =>
         night.actions
@@ -301,7 +319,7 @@ export default function NightScreen() {
   const prevDreamwalkerTarget = getEffectiveDreamwalkerTarget(nightHistory.at(-1)?.actions ?? []);
   const provisionalNightDeaths = roleId === 'sharpshooter'
     ? computeNightDeaths(
-        nightActions,
+        effectiveNightActions,
         roleMembersMap,
         playerCardMap,
         upperDeadPlayers,
@@ -315,7 +333,7 @@ export default function NightScreen() {
     activeMembers.some(member => provisionalNightDeaths.includes(member));
 
   const witchIsInGame = selectedRoles.some(entry => entry.roleId === 'witch' && entry.count > 0);
-  const witchHasActed = nightActions.some(action => action.roleId === 'witch');
+  const witchHasActed = effectiveNightActions.some(action => action.roleId === 'witch');
   const deathAbilityStatusPending =
     (roleId === 'hunter' || roleId === 'wolf_king') &&
     !sealedByMummy &&
@@ -326,7 +344,7 @@ export default function NightScreen() {
         player,
         status: getNightDeathAbilityStatus(
           player,
-          nightActions,
+          effectiveNightActions,
           roleMembersMap,
           playerCardMap,
           upperDeadPlayers,
@@ -346,9 +364,9 @@ export default function NightScreen() {
 
   // 今晚狼人的刀人目標（給女巫用）
   const wolfKillTarget =
-    nightActions.find(a => a.roleId === 'werewolf' || a.roleId === 'wolf_king')?.killTarget ??
-    nightActions.find(a => a.roleId === 'tengu')?.tenguKillTargets?.[0];
-  const shamanKnifeTarget = nightActions.find(a => a.roleId === 'shaman' && a.shamanMode === 'knife')?.shamanTarget;
+    effectiveNightActions.find(a => a.roleId === 'werewolf' || a.roleId === 'wolf_king')?.killTarget ??
+    effectiveNightActions.find(a => a.roleId === 'tengu')?.tenguKillTargets?.[0];
+  const shamanKnifeTarget = effectiveNightActions.find(a => a.roleId === 'shaman' && a.shamanMode === 'knife')?.shamanTarget;
 
   const getSingleRoleForPlayer = (player: number): string | undefined =>
     Object.entries(roleMembersMap).find(([, list]) => (list ?? []).includes(player))?.[0];

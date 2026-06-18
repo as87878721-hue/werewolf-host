@@ -352,6 +352,7 @@ interface GameState {
   setNightStep: (step: number) => void;
   finishNight: () => NightRecord;
   resetNight: () => void;
+  resetGameProgress: () => void;
   startNewGame: (mode: GameMode) => void;
   setRoleMembers: (roleId: string, members: number[]) => void;
   setPlayerCardRole: (player: number, slot: 'upper' | 'lower', roleId: string) => void;
@@ -967,6 +968,45 @@ export const useGameStore = create<GameState>((set, get) => ({
       }));
     }
   },
+
+  resetGameProgress: () => set({
+    currentNight: 1,
+    currentStep: 0,
+    nightActions: [],
+    nightHistory: [],
+    nightStepSnapshots: {},
+    dayStepSnapshots: {},
+    saveUsed: false,
+    poisonUsed: false,
+    sharpshooterUsed: false,
+    checkedPlayers: {},
+    roleMembersMap: {},
+    playerCardMap: {},
+    deadPlayers: [],
+    upperDeadPlayers: [],
+    sheriffPlayer: null,
+    lostVotePlayers: [],
+    idiotFlippedPlayers: [],
+    anubisScaledPlayers: [],
+    cupidLovers: null,
+    bishopHolder: null,
+    knightUsed: false,
+    lastDayExileInfo: null,
+    lastDayExiledRoleId: null,
+    slaveTraderSlaves: [],
+    fireWolfBurnedPlayers: [],
+    fireWolfBurnedCards: [],
+    fireWolfUsed: false,
+    spiritWolfMimic: null,
+    spiritWolfSaveUsed: false,
+    spiritWolfPoisonUsed: false,
+    mummySealedRoles: [],
+    monkVoteTarget: null,
+    monkVoteCard: null,
+    goldenBabyPlayers: [],
+    winResult: null,
+    gameLog: [],
+  }),
 
   startNewGame: (mode) => {
     const baseConfig = mode === 'dual' ? DEFAULT_DUAL_CONFIG : DEFAULT_SINGLE_CONFIG;

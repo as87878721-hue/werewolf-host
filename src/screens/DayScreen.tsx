@@ -22,8 +22,7 @@ import {
   WinResult,
 } from '../store/gameStore';
 import PlayerButton, { RoleInfo } from '../components/PlayerButton';
-import LogButton from '../components/LogButton';
-import RandomToolButton from '../components/RandomToolButton';
+import HeaderMenuButton from '../components/HeaderMenuButton';
 
 type Nav = NativeStackNavigationProp<RootStackParamList, 'Day'>;
 type NightAbility = 'none' | 'hunter' | 'wolfking';
@@ -39,7 +38,7 @@ export default function DayScreen() {
     singleWinRule, winResult,
     sheriffPlayer, lostVotePlayers, idiotFlippedPlayers,
     cupidLovers, bishopHolder, knightUsed, goldenBabyPlayers, monkVoteTarget, slaveTraderSlaves, fireWolfBurnedPlayers,
-    setSheriff, endDay, setBishopHolder, setKnightUsed, setRoleMembers, setPlayerCardRole, setNightStep,
+    setSheriff, endDay, setBishopHolder, setKnightUsed, setRoleMembers, setPlayerCardRole, setNightStep, resetGameProgress,
     setMonkVoteTarget, setMonkVoteCard, captureDayStepSnapshot, restoreDayStepSnapshot,
   } = useGameStore();
 
@@ -140,9 +139,20 @@ export default function DayScreen() {
   useEffect(() => {
     navigation.setOptions({
       title: `第 ${currentNight} 天`,
-      headerRight: () => <RandomToolButton />,
+      headerLeft: () => (
+        <TouchableOpacity
+          onPress={() => {
+            resetGameProgress();
+            navigation.dispatch(CommonActions.reset({ index: 0, routes: [{ name: 'Home' }] }));
+          }}
+          style={{ paddingHorizontal: 4, paddingVertical: 6 }}
+        >
+          <Text style={{ color: Colors.text, fontSize: 22, fontWeight: 'bold' }}>⌂</Text>
+        </TouchableOpacity>
+      ),
+      headerRight: () => null,
     });
-  }, [navigation, currentNight]);
+  }, [navigation, currentNight, resetGameProgress]);
 
   // 0=警長  1=公布死亡  2=發言  3=投票  4=放逐結果
   const [step, setStep] = useState(0);
@@ -297,64 +307,37 @@ export default function DayScreen() {
     captureDayStepSnapshot(step);
   }, [captureDayStepSnapshot, step]);
 
-  useEffect(() => {
-    navigation.setOptions({
-      headerLeft: () => (
-        <TouchableOpacity
-          onPress={() => {
-            if (step === 0) {
-              setNightStep(Math.max(nightOrder.length - 1, 0));
-              navigation.goBack();
-            } else if (
-              step === 2 &&
-              (
-                pendingSelfDestruct !== null ||
-                lastWordsPlayer !== null ||
-                speechDeaths.length > 0 ||
-                dayDeathRounds.length > 0 ||
-                handledDayDeathSkills.length > 0 ||
-                knightDuelActive ||
-                knightDuelResolved ||
-                knightDuelKills.length > 0
-              )
-            ) {
-              clearDayStepState(2);
-            } else if (
-              step === 3 &&
-              (exiledPlayer !== null || monkVoteMode || monkVoteTarget !== null)
-            ) {
-              clearDayStepState(3);
-            } else if (step === 4) {
-              clearDayStepState(4);
-              setStep(3);
-            } else {
-              clearDayStepState(step - 1);
-              setStep(previous => Math.max(previous - 1, 0));
-            }
-          }}
-          style={{ paddingHorizontal: 4, paddingVertical: 6 }}
-        >
-          <Text style={{ color: Colors.text, fontSize: 24 }}>{'<'}</Text>
-        </TouchableOpacity>
-      ),
-    });
-  }, [
-    navigation,
-    step,
-    nightOrder.length,
-    setNightStep,
-    pendingSelfDestruct,
-    lastWordsPlayer,
-    speechDeaths,
-    dayDeathRounds,
-    handledDayDeathSkills,
-    knightDuelActive,
-    knightDuelResolved,
-    knightDuelKills,
-    exiledPlayer,
-    monkVoteMode,
-    monkVoteTarget,
-  ]);
+  const handleBack = () => {
+    if (step === 0) {
+      setNightStep(Math.max(nightOrder.length - 1, 0));
+      navigation.goBack();
+    } else if (
+      step === 2 &&
+      (
+        pendingSelfDestruct !== null ||
+        lastWordsPlayer !== null ||
+        speechDeaths.length > 0 ||
+        dayDeathRounds.length > 0 ||
+        handledDayDeathSkills.length > 0 ||
+        knightDuelActive ||
+        knightDuelResolved ||
+        knightDuelKills.length > 0
+      )
+    ) {
+      clearDayStepState(2);
+    } else if (
+      step === 3 &&
+      (exiledPlayer !== null || monkVoteMode || monkVoteTarget !== null)
+    ) {
+      clearDayStepState(3);
+    } else if (step === 4) {
+      clearDayStepState(4);
+      setStep(3);
+    } else {
+      clearDayStepState(step - 1);
+      setStep(previous => Math.max(previous - 1, 0));
+    }
+  };
 
   const dayPhaseUpperDeadPlayers = [
     ...new Set([...upperDeadPlayers, ...nightChainDeaths]),
@@ -2251,7 +2234,7 @@ export default function DayScreen() {
             <Text style={styles.sheriffLine}>⭐ 警長：{localSheriff} 號</Text>
           )}
         </View>
-        <LogButton />
+        <HeaderMenuButton onBack={handleBack} />
       </View>
 
       {displayedWinResult && (

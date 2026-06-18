@@ -21,8 +21,7 @@ import {
   projectDeathState,
 } from '../store/gameStore';
 import PlayerButton, { RoleInfo } from '../components/PlayerButton';
-import LogButton from '../components/LogButton';
-import RandomToolButton from '../components/RandomToolButton';
+import HeaderMenuButton from '../components/HeaderMenuButton';
 
 type Nav = NativeStackNavigationProp<RootStackParamList, 'Night'>;
 
@@ -88,7 +87,7 @@ export default function NightScreen() {
     winResult,
     lastDayExileInfo, lastDayExiledRoleId, sharpshooterUsed, anubisScaledPlayers, cupidLovers,
     goldenBabyConfig, goldenBabyPlayers, spiritWolfMimic, spiritWolfSaveUsed, spiritWolfPoisonUsed, mummySealedRoles, monkVoteTarget, monkVoteCard, fireWolfBurnedPlayers, fireWolfBurnedCards, fireWolfUsed, slaveTraderSlaves,
-    recordAction, captureNightStepSnapshot, nextStep, prevStep, rewindNightStep, finishNight, resetNight, setRoleMembers, transformThief, setGoldenBabyPlayers,
+    recordAction, captureNightStepSnapshot, nextStep, prevStep, rewindNightStep, finishNight, resetNight, resetGameProgress, setRoleMembers, transformThief, setGoldenBabyPlayers,
   } = useGameStore();
   const isDualMode = gameMode === 'dual';
   const { width } = useWindowDimensions();
@@ -399,25 +398,31 @@ export default function NightScreen() {
   })();
   const effectiveMonkVoteTarget = monkVoteCardDiedToday ? undefined : monkVoteTarget ?? undefined;
 
+  const handleBack = () => {
+    if (currentStep > 0) {
+      rewindNightStep(currentStep - 1);
+      return;
+    }
+    if (currentNight > 1 && navigation.canGoBack()) navigation.goBack();
+  };
+
   useEffect(() => {
     navigation.setOptions({
       title: `第 ${currentNight} 晚`,
-      headerLeft: currentStep > 0
-        ? () => (
-            <TouchableOpacity onPress={() => rewindNightStep(currentStep - 1)} style={{ paddingHorizontal: 4, paddingVertical: 6 }}>
-              <Text style={{ color: Colors.text, fontSize: 24 }}>{'<'}</Text>
-            </TouchableOpacity>
-          )
-        : currentNight > 1 && navigation.canGoBack()
-        ? () => (
-            <TouchableOpacity onPress={() => navigation.goBack()} style={{ paddingHorizontal: 4, paddingVertical: 6 }}>
-              <Text style={{ color: Colors.text, fontSize: 24 }}>{'<'}</Text>
-            </TouchableOpacity>
-          )
-        : () => null,
-      headerRight: () => <RandomToolButton />,
+      headerLeft: () => (
+        <TouchableOpacity
+          onPress={() => {
+            resetGameProgress();
+            navigation.dispatch(CommonActions.reset({ index: 0, routes: [{ name: 'Home' }] }));
+          }}
+          style={{ paddingHorizontal: 4, paddingVertical: 6 }}
+        >
+          <Text style={{ color: Colors.text, fontSize: 22, fontWeight: 'bold' }}>⌂</Text>
+        </TouchableOpacity>
+      ),
+      headerRight: () => null,
     });
-  }, [navigation, currentNight, currentStep, prevStep, rewindNightStep]);
+  }, [navigation, currentNight, resetGameProgress]);
   // 盜賊僅第一晚出現，後續夜晚自動跳過
   useEffect(() => {
     const savedMembers = roleId === 'golden_baby'
@@ -987,7 +992,7 @@ export default function NightScreen() {
             <Text style={styles.roleName}>{role.name}</Text>
             <Text style={styles.modeLabel}>{getModeLabel()}</Text>
           </View>
-          <LogButton />
+          <HeaderMenuButton onBack={handleBack} />
           <Text style={styles.stepBadge}>{currentStep + 1}/{nightOrder.length}</Text>
         </View>
 

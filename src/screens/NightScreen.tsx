@@ -367,18 +367,25 @@ export default function NightScreen() {
     const activeRole = getSingleRoleForPlayer(player);
     return activeRole !== undefined && (wolfRoleIds.has(activeRole) || activeRole === 'wild_child');
   });
-  const explorerResult: 'clockwise' | 'counterclockwise' | 'unknown' = (() => {
+  const explorerResult: number | 'unknown' = (() => {
     const explorer = activeMembers[0];
     if (!explorer || sealedByMummy) return 'unknown';
-    let cw = Infinity;
-    let ccw = Infinity;
+    let nearestDistance = Infinity;
+    let nearestWolves: number[] = [];
     for (const wolf of activeWolfPlayers) {
       if (wolf === explorer) continue;
-      cw = Math.min(cw, (wolf - explorer + totalPlayers) % totalPlayers);
-      ccw = Math.min(ccw, (explorer - wolf + totalPlayers) % totalPlayers);
+      const cw = (wolf - explorer + totalPlayers) % totalPlayers;
+      const ccw = (explorer - wolf + totalPlayers) % totalPlayers;
+      const distance = Math.min(cw, ccw);
+      if (distance < nearestDistance) {
+        nearestDistance = distance;
+        nearestWolves = [wolf];
+      } else if (distance === nearestDistance) {
+        nearestWolves.push(wolf);
+      }
     }
-    if (!Number.isFinite(cw) || cw === ccw) return 'unknown';
-    return cw < ccw ? 'clockwise' : 'counterclockwise';
+    if (!Number.isFinite(nearestDistance) || nearestWolves.length !== 1) return 'unknown';
+    return nearestWolves[0];
   })();
   const mummyNightIndex = nightOrder.indexOf('mummy');
   const selectedRoleIdSet = new Set(selectedRoles.filter(entry => entry.count > 0).map(entry => entry.roleId));
@@ -604,7 +611,7 @@ export default function NightScreen() {
       setRoleMembers(roleId, roleMemberWriteList);
     }
     if (!canUseRoleSkill) {
-      recordAction({ roleId, members: [] });
+      recordAction({ roleId, members: sealedByMummy ? skillMembers : [] });
       nextStep();
       return;
     }
@@ -828,6 +835,7 @@ export default function NightScreen() {
   // ── 模式說明 ──
   const getModeLabel = () => {
     if (!hasSelectedRolePosition) return '請先選擇至少一名角色位置';
+    if (sealedByMummy) return '被封印';
     if (rolePositionKnown && !canUseRoleSkill) return '場上無活躍角色，請手動跳過';
     if (roleId === 'werewolf' && wolfNightParticipants.some(player => shapeshifterMembers.includes(player))) {
       return '變形怪參與狼人行動';
@@ -1049,12 +1057,14 @@ export default function NightScreen() {
       {/* ── 下半部：行動區 ── */}
       <View style={styles.bottomHalf}>
         {!canUseRoleSkill && (
-          <View style={[styles.infoCard, { borderColor: Colors.textMuted }]}>
-            <Text style={[styles.infoCardTitle, { color: Colors.textMuted }]}>
-              {hasSelectedRolePosition ? '⏭️ 場上無活躍角色' : '📍 尚未確認角色位置'}
+          <View style={[styles.infoCard, { borderColor: sealedByMummy ? Colors.warning : Colors.textMuted }]}>
+            <Text style={[styles.infoCardTitle, { color: sealedByMummy ? Colors.warning : Colors.textMuted }]}>
+              {sealedByMummy ? '🪦 被封印' : hasSelectedRolePosition ? '⏭️ 場上無活躍角色' : '📍 尚未確認角色位置'}
             </Text>
             <Text style={styles.infoCardBody}>
-              {hasSelectedRolePosition
+              {sealedByMummy
+                ? '被木乃伊封印'
+                : hasSelectedRolePosition
                 ? '此角色已死亡或目前不是活躍牌，標記保留，請確認後手動跳過'
                 : '請先選擇至少一名角色位置，否則本晚跳過技能'}
             </Text>
@@ -1276,7 +1286,7 @@ export default function NightScreen() {
           <View style={[styles.infoCard, { borderColor: Colors.village }]}>
             <Text style={[styles.infoCardTitle, { color: Colors.village }]}>🧭 探險家資訊</Text>
             <Text style={styles.infoCardBody}>
-              {explorerResult === 'clockwise' ? '順時針' : explorerResult === 'counterclockwise' ? '逆時針' : '未知'}
+              {explorerResult === 'unknown' ? '未知' : `最近的狼：${explorerResult}號`}
             </Text>
           </View>
         )}

@@ -242,6 +242,32 @@ expectEqual(
 );
 
 expectEqual(
+  'single mode any living wolf team role can use wolf night action',
+  getWolfNightParticipants(
+    'single',
+    { werewolf: [1], crow: [2] },
+    {},
+    [],
+    [1],
+  ),
+  [2],
+);
+
+expectEqual(
+  'dual mode living lower wolf team card can use wolf night action',
+  getWolfNightParticipants(
+    'dual',
+    { werewolf: [1], crow: [2] },
+    {
+      1: { upper: 'werewolf' },
+      2: { upper: 'seer', lower: 'crow' },
+    },
+    [1],
+  ),
+  [2],
+);
+
+expectEqual(
   'living lower shapeshifter can perform wolf action without a living werewolf',
   getWolfNightParticipants(
     'dual',

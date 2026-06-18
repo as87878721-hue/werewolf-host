@@ -43,7 +43,7 @@ export interface NightAction {
   fireWolfKillTarget?: number;
   blindSwordsmanMode?: 'monk_vote' | 'kill';
   blindSwordsmanTarget?: number;
-  explorerResult?: 'clockwise' | 'counterclockwise' | 'unknown';
+  explorerResult?: number | 'unknown';
   mummySealedRole?: string;
   monkVoteTarget?: number;
 }
@@ -1485,21 +1485,32 @@ export function getWolfNightParticipants(
   upperDeadPlayers: number[] = [],
   deadPlayers: number[] = [],
 ): number[] {
-  const activeWerewolves = getActiveNightRoleMembers(
-    'werewolf',
-    roleMembersMap['werewolf'] ?? [],
-    gameMode,
-    roleMembersMap,
-    playerCardMap,
-    upperDeadPlayers,
-    deadPlayers,
-  );
-  const shapeshifters = (roleMembersMap['shapeshifter'] ?? []).filter(player => {
-    if (deadPlayers.includes(player)) return false;
-    if (gameMode === 'single') return true;
-    return playerCardMap[player]?.lower === 'shapeshifter';
-  });
-  return [...new Set([...activeWerewolves, ...shapeshifters])];
+  const wolfRoleIds = new Set(ROLES.filter(role => role.team === 'wolf').map(role => role.id));
+  const wolfPlayers = new Set<number>();
+
+  if (gameMode === 'single') {
+    for (const [roleId, members] of Object.entries(roleMembersMap)) {
+      if (!wolfRoleIds.has(roleId) && roleId !== 'wild_child') continue;
+      for (const player of members ?? []) {
+        if (!deadPlayers.includes(player)) wolfPlayers.add(player);
+      }
+    }
+    return [...wolfPlayers];
+  }
+
+  for (const [playerStr, cards] of Object.entries(playerCardMap)) {
+    const player = Number(playerStr);
+    if (deadPlayers.includes(player)) continue;
+    const upperWolf = cards.upper !== undefined &&
+      !upperDeadPlayers.includes(player) &&
+      (wolfRoleIds.has(cards.upper) || cards.upper === 'wild_child');
+    const lowerWolf = cards.lower !== undefined &&
+      (wolfRoleIds.has(cards.lower) || cards.lower === 'wild_child');
+    if (upperWolf || lowerWolf) {
+      wolfPlayers.add(player);
+    }
+  }
+  return [...wolfPlayers];
 }
 
 export type NightDeathAbilityStatus = 'can_trigger' | 'poisoned' | 'sealed';

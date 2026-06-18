@@ -1931,7 +1931,9 @@ export function computeNightDeaths(
     return upperDeadPlayers.includes(p) ? cards.lower : cards.upper;
   };
   const isActiveDreamwalker = (p: number) => {
+    const cards = playerCardMap[p];
     const activeRole = getActiveCardRoleId(p);
+    if (cards) return activeRole === 'dreamwalker';
     if (activeRole !== undefined) return activeRole === 'dreamwalker';
     return (roleMembersMap['dreamwalker'] ?? []).includes(p);
   };
@@ -1975,7 +1977,9 @@ export function computeNightDeaths(
 
   // 女巫毒藥（獵魔人免疫毒藥）
   const isActiveWitchHunter = (p: number) => {
+    const cards = playerCardMap[p];
     const activeRole = getActiveCardRoleId(p);
+    if (cards) return activeRole === 'witch_hunter';
     if (activeRole !== undefined) return activeRole === 'witch_hunter';
     return (roleMembersMap['witch_hunter'] ?? []).includes(p);
   };
@@ -2003,7 +2007,9 @@ export function computeNightDeaths(
     // 阿努比斯：天秤一端狼一端好人 → 好人死（野孩子視為狼，依 active card 判斷）
     if (a.roleId === 'anubis' && (a.anubisTargets?.length ?? 0) === 2) {
       const isWolfTeamForAnubis = (p: number) => {
+        const cards = playerCardMap[p];
         const activeRole = getActiveCardRoleId(p);
+        if (cards) return activeRole !== undefined && (wolfTeamIds.has(activeRole) || activeRole === 'wild_child');
         if (activeRole !== undefined) return wolfTeamIds.has(activeRole) || activeRole === 'wild_child';
         return getPlayerRoleIds(p).some(rid => wolfTeamIds.has(rid) || rid === 'wild_child');
       };

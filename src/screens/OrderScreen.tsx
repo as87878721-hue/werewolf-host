@@ -68,6 +68,7 @@ export default function OrderScreen() {
   orderRef.current = order;
   const dragStateRef = useRef(dragState);
   dragStateRef.current = dragState;
+  const scrollOffsetYRef = useRef(0);
 
   const dragTranslateY = useRef(new Animated.Value(0)).current;
 
@@ -134,6 +135,10 @@ export default function OrderScreen() {
         <ScrollView
           contentContainerStyle={{ paddingBottom: 100 }}
           scrollEnabled={dragState === null}
+          onScroll={event => {
+            scrollOffsetYRef.current = event.nativeEvent.contentOffset.y;
+          }}
+          scrollEventThrottle={16}
         >
           {order.length === 0 && (
             <Text style={styles.emptyText}>本局沒有夜間行動的腳色</Text>
@@ -179,7 +184,7 @@ export default function OrderScreen() {
               styles.row,
               styles.rowFloating,
               {
-                top: dragState.fromIndex * ITEM_HEIGHT,
+                top: dragState.fromIndex * ITEM_HEIGHT - scrollOffsetYRef.current,
                 transform: [{ translateY: dragTranslateY }],
               },
             ]}

@@ -68,9 +68,10 @@ export default function DayScreen() {
     slaveTraderSlaves,
   );
 
-  // 血月：上一晚是否發動（延後所有技能公布）
+  // 血月：上一晚是否發動（延後夜晚資訊與夜晚死亡結算）
   const bloodMoonActivated = nightActions.find(a => a.roleId === 'blood_moon')?.bloodMoonActivated ?? false;
-  // 訓熊師結果（血月發動時延後公布）
+  const bearTamerInGame = selectedRoles.some(entry => entry.roleId === 'bear_tamer');
+  // 訓熊師真實結果（血月發動時延後公布）
   const bearTamerResult = nightActions.find(a => a.roleId === 'bear_tamer')?.bearTamerResult;
 
   const currentMagicSwap = getMagicSwap(nightActions);
@@ -92,8 +93,7 @@ export default function DayScreen() {
     cupidLovers,
     gameMode,
   );
-  const nightDeaths = resolvedNightDeathRounds.flat();
-  // 血月發動時玩家不死亡，正常參加投票和發言。
+  // 血月發動時，真實夜晚死亡延後到放逐結果後才套用。
   const initialNightDeathRounds = bloodMoonActivated ? [] : resolvedNightDeathRounds;
   const [nightDeathRounds, setNightDeathRounds] = useState<number[][]>(initialNightDeathRounds);
   const [handledNightDeathSkills, setHandledNightDeathSkills] = useState<number[]>([]);
@@ -402,9 +402,30 @@ export default function DayScreen() {
     upperDeadPlayers,
     nightChainDeaths,
   );
+  // 血月延後結算時，先排除白天已死亡者，再重新建立夜晚死亡連鎖。
+  // 這可避免已在白天死亡的原始目標仍觸發殉情、夢遊者等夜晚連鎖。
+  const delayedNightDeathRounds = bloodMoonActivated
+    ? resolveAutomaticDeathRounds(
+        directNightDeaths,
+        'night',
+        nightActions,
+        roleMembersMap,
+        playerCardMap,
+        upperDeadPlayers,
+        deadPlayers,
+        prevDreamwalkerTarget,
+        cupidLovers,
+        gameMode,
+        resolvedDayDeaths,
+      )
+    : [];
+  const delayedNightDeaths = [...new Set(delayedNightDeathRounds.flat())];
+  const settledNightDeaths = bloodMoonActivated && step >= 4
+    ? delayedNightDeaths
+    : nightChainDeaths;
   const dreamwalkerCarryDeaths = resolvedDayDeaths.filter(p => !directDayDeaths.includes(p));
   const previewDeaths = [
-    ...nightChainDeaths,
+    ...settledNightDeaths,
     ...resolvedDayDeaths,
   ];
   const previewDeathState = projectDeathState(
@@ -524,13 +545,13 @@ export default function DayScreen() {
     return undefined;
   };
   const bmHunterPlayer = bloodMoonActivated
-    ? nightDeaths.find(p => getBmDeathRole(p) === 'hunter' && p !== witchPoisonTarget)
+    ? delayedNightDeaths.find(p => getBmDeathRole(p) === 'hunter' && p !== witchPoisonTarget)
     : undefined;
   const bmWolfKingPlayer = bloodMoonActivated
-    ? nightDeaths.find(p => getBmDeathRole(p) === 'wolf_king' && p !== witchPoisonTarget)
+    ? delayedNightDeaths.find(p => getBmDeathRole(p) === 'wolf_king' && p !== witchPoisonTarget)
     : undefined;
   const bishopDiedBloodMoon = bishopInGame && bloodMoonActivated &&
-    currentBishopHolder !== null && nightDeaths.includes(currentBishopHolder) && !bishopResolved;
+    currentBishopHolder !== null && delayedNightDeaths.includes(currentBishopHolder) && !bishopResolved;
   const lastWordsRoleForPreview = lastWordsPlayer !== null
     ? isDualMode
       ? getActiveDayRole(lastWordsPlayer)
@@ -541,6 +562,7 @@ export default function DayScreen() {
     wwBringResolved;
   const bloodMoonDeathChainComplete =
     !bloodMoonActivated ||
+    step < 4 ||
     ((bmHunterPlayer === undefined || bmHunterResolved) &&
      (bmWolfKingPlayer === undefined || bmWolfKingResolved));
   const dayDeathChainComplete =
@@ -557,7 +579,7 @@ export default function DayScreen() {
           gameMode,
           deadPlayers,
           upperDeadPlayers,
-          [...nightChainDeaths, ...new Set([...resolvedDayDeaths, ...extraDeaths])],
+          [...settledNightDeaths, ...new Set([...resolvedDayDeaths, ...extraDeaths])],
         )
       : previewDeathState;
     return computeWinResult({
@@ -596,7 +618,7 @@ export default function DayScreen() {
 
   // Tengu: detect if died this day phase
   const tenguDiedThisPhase = (() => {
-    const allDeadSoFar = [...nightChainDeaths, ...resolvedDayDeaths];
+    const allDeadSoFar = [...settledNightDeaths, ...resolvedDayDeaths];
     return allDeadSoFar.some(p => hasActiveRole(p, 'tengu') || (roleMembersMap['tengu'] ?? []).includes(p));
   })();
 
@@ -632,11 +654,18 @@ export default function DayScreen() {
 
   const handleWolfSelfDestructEnd = (finalSheriff: number | null, extraDayKills: number[] = []) => {
     if (stopIfDayWin(extraDayKills)) return;
+    if (bloodMoonActivated) {
+      setLocalSheriff(finalSheriff);
+      setExiledPlayer(undefined);
+      setLastWordsPlayer(null);
+      setStep(4);
+      return;
+    }
     setSheriff(finalSheriff);
     endDay({
       exiledPlayer: undefined,
       isIdiotFlip: false,
-      nightChainDeaths,
+      nightChainDeaths: bloodMoonActivated ? delayedNightDeaths : nightChainDeaths,
       dayKills: [...dayChainDeaths, ...extraDayKills, ...knightDuelKills],
     });
     navigation.navigate('Night');
@@ -981,13 +1010,23 @@ export default function DayScreen() {
 
       {/* 血月：對玩家宣布平安夜 */}
       {bloodMoonActivated ? (
-        <View style={styles.peaceBox}>
-          <Text style={styles.peaceEmoji}>🌑</Text>
-          <Text style={styles.peaceText}>血月發動 — 對玩家宣布：昨晚平安夜</Text>
-          <Text style={[styles.hint, { textAlign: 'center', marginTop: 4 }]}>
-            延後死亡請見放逐結果頁公布
-          </Text>
-        </View>
+        <>
+          <View style={styles.peaceBox}>
+            <Text style={styles.peaceEmoji}>🌑</Text>
+            <Text style={styles.peaceText}>血月發動 — 對玩家宣布：昨晚平安夜</Text>
+            <Text style={[styles.hint, { textAlign: 'center', marginTop: 4 }]}>
+              延後夜晚資訊請見放逐結果頁公布
+            </Text>
+          </View>
+          {bearTamerInGame && (
+            <View style={[styles.banner, { borderColor: Colors.warning }]}>
+              <Text style={[styles.bannerText, { color: Colors.warning }]}>
+                🐻 訓熊師：熊沒有叫
+              </Text>
+              <Text style={styles.hint}>← 血月期間向玩家宣布此結果</Text>
+            </View>
+          )}
+        </>
       ) : nightDeathRounds.length === 0 ? (
         <View style={styles.peaceBox}>
           <Text style={styles.peaceEmoji}>✨</Text>
@@ -1283,6 +1322,13 @@ export default function DayScreen() {
                 setLastWordsPlayer(null);
                 return;
               }
+              if (speechDeathNotice === 'knight_wolf' && bloodMoonActivated) {
+                setLocalSheriff(finalSheriff);
+                setExiledPlayer(undefined);
+                setSpeechDeathNotice(null);
+                setStep(4);
+                return;
+              }
               if (speechDeathNotice === 'knight_wolf') {
                 setSheriff(finalSheriff);
                 endDay({
@@ -1389,19 +1435,6 @@ export default function DayScreen() {
             <Text style={styles.peaceEmoji}>🗣️</Text>
             <Text style={styles.peaceText}>遺言發表中...</Text>
           </View>
-
-          {/* 血月延後資訊（狼隊自爆直接進夜晚前告知主持人） */}
-          {lwEndsDay && bloodMoonActivated && (
-            <View style={[styles.banner, { borderColor: Colors.wolf }]}>
-              <Text style={[styles.bannerText, { color: Colors.wolf }]}>🌑 血月延後資訊 — 現在公布給玩家：</Text>
-              {nightDeaths.length === 0
-                ? <Text style={styles.hint}>昨晚無死亡</Text>
-                : nightDeaths.map(p => (
-                    <Text key={p} style={[styles.hint, { color: Colors.text }]}>☠️ {p} 號出局</Text>
-                  ))
-              }
-            </View>
-          )}
 
           {/* 獵人技能 */}
           {lwIsHunter && !handledDayDeathSkills.includes(lastWordsPlayer) && (
@@ -1788,9 +1821,17 @@ export default function DayScreen() {
       localSheriff !== null &&
       dayChainDeaths.includes(localSheriff) &&
       !sheriffExiled;
+    const sheriffKilledByBloodMoon =
+      bloodMoonActivated &&
+      localSheriff !== null &&
+      delayedNightDeaths.includes(localSheriff) &&
+      !sheriffExiled &&
+      !sheriffKilledByDayChain;
     const resultSheriffDeathPlayer = sheriffExiled
       ? exiledPlayer as number
       : sheriffKilledByDayChain
+      ? localSheriff
+      : sheriffKilledByBloodMoon
       ? localSheriff
       : null;
     const isIdiotFlip  = exileAbilityResolved && exileAbility === 'idiot';
@@ -1798,7 +1839,9 @@ export default function DayScreen() {
       resultSheriffDeathPlayer !== null &&
       !(sheriffExiled && isIdiotFlip) &&
       !exileBadgeResolved;
-    const targetNums   = aliveNums.filter(p => isIdiotFlip || p !== exiledPlayer);
+    const targetNums   = aliveNums.filter(p =>
+      !delayedNightDeaths.includes(p) && (isIdiotFlip || p !== exiledPlayer)
+    );
     const canSelectExileAbilityTarget = (player: number) => targetNums.includes(player);
 
     const exileAbilityModes: ExileAbility[] = (() => {
@@ -1821,7 +1864,7 @@ export default function DayScreen() {
     const bloodMoonCandidates = playerNums.filter(p => {
       if (deadPlayers.includes(p)) return false;
       if (resolvedDayDeaths.includes(p)) return false;
-      if (nightDeaths.includes(p)) return false;
+      if (delayedNightDeaths.includes(p)) return false;
       if (typeof exiledPlayer === 'number' && p === exiledPlayer) return false;
       return true;
     });
@@ -1954,15 +1997,20 @@ export default function DayScreen() {
             <>
               <View style={[styles.banner, { borderColor: Colors.wolf, marginTop: 8 }]}>
                 <Text style={[styles.bannerText, { color: Colors.wolf }]}>🌑 血月延後資訊 — 現在公布給玩家：</Text>
-                {nightDeaths.length === 0
-                  ? <Text style={styles.hint}>昨晚無死亡</Text>
-                  : nightDeaths.map(p => (
+                {delayedNightDeaths.length === 0
+                  ? <Text style={styles.hint}>昨晚平安夜</Text>
+                  : delayedNightDeaths.map(p => (
                       <Text key={p} style={[styles.hint, { color: Colors.text }]}>☠️ {p} 號出局</Text>
                     ))
                 }
                 {bearTamerResult && (
                   <Text style={[styles.hint, { color: Colors.text, marginTop: 4 }]}>
-                    🐻 訓熊師：熊{bearTamerResult === 'growl' ? '叫了' : '沒有叫'}
+                    🐻 訓熊師真實結果：熊{bearTamerResult === 'growl' ? '叫了' : '沒有叫'}
+                  </Text>
+                )}
+                {crowSurroundTarget !== undefined && (
+                  <Text style={[styles.hint, { color: Colors.text, marginTop: 4 }]}>
+                    🐦‍⬛ 烏鴉環繞：{crowSurroundTarget}號
                   </Text>
                 )}
               </View>
@@ -2233,7 +2281,9 @@ export default function DayScreen() {
     let finalSheriff = localSheriff;
     const sheriffExiledNow = typeof exiledPlayer === 'number' && exiledPlayer === localSheriff;
     const sheriffKilledInDayChain = localSheriff !== null && dayChainDeaths.includes(localSheriff);
-    if ((sheriffKilledInDayChain || (sheriffExiledNow && !isIdiotFlip))) {
+    const sheriffKilledInDelayedNight = bloodMoonActivated &&
+      localSheriff !== null && delayedNightDeaths.includes(localSheriff);
+    if ((sheriffKilledInDayChain || sheriffKilledInDelayedNight || (sheriffExiledNow && !isIdiotFlip))) {
       if (exileBadgeAction === 'tear') finalSheriff = null;
       else if (exileBadgeAction === 'handover' && exileBadgeRecipient !== null) finalSheriff = exileBadgeRecipient;
     }
@@ -2244,7 +2294,7 @@ export default function DayScreen() {
     endDay({
       exiledPlayer: typeof exiledPlayer === 'number' ? exiledPlayer : undefined,
       isIdiotFlip,
-      nightChainDeaths,
+      nightChainDeaths: bloodMoonActivated ? delayedNightDeaths : nightChainDeaths,
       dayKills: [...dayChainDeaths, ...exileKills,
         ...knightDuelKills,
         ...(bmHunterResolved && bmHunterTarget !== null ? [bmHunterTarget] : []),
@@ -2276,13 +2326,15 @@ export default function DayScreen() {
       const isIdiotFlip = exileAbilityResolved && exileAbility === 'idiot';
       const sheriffExiled = !noVote && typeof exiledPlayer === 'number' && exiledPlayer === localSheriff;
       const sheriffKilledInDayChain = localSheriff !== null && dayChainDeaths.includes(localSheriff);
+      const sheriffKilledInDelayedNight = bloodMoonActivated &&
+        localSheriff !== null && delayedNightDeaths.includes(localSheriff);
       if (bloodMoonActivated && bmHunterPlayer !== undefined && !bmHunterResolved) return true;
       if (bloodMoonActivated && bmWolfKingPlayer !== undefined && !bmWolfKingResolved) return true;
       if (!exileAbilityResolved && (exileAbility === 'hunter' || exileAbility === 'wolfking')) {
         return exileAbilityTarget !== null;
       }
       if (
-        (sheriffKilledInDayChain || (sheriffExiled && !isIdiotFlip)) &&
+        (sheriffKilledInDayChain || sheriffKilledInDelayedNight || (sheriffExiled && !isIdiotFlip)) &&
         !exileBadgeResolved
       ) {
         if (!exileBadgeAction) return false;

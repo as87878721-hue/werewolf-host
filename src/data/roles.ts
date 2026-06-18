@@ -97,9 +97,9 @@ export const ROLES: RoleDefinition[] = [
     emoji: '🌑',
     defaultOrder: 6,
     hasNightAction: true,
-    actionPrompt: '血月使徒請睜眼，是否發動技能？（發動後隔日清晨公布為平安夜，延後所有技能）',
+    actionPrompt: '血月使徒請睜眼，是否發動技能？（發動後隔日清晨公布平安夜；若有訓熊師一併公布熊沒有叫。真實夜晚資訊與夜晚死亡延後至放逐後結算，白天資訊與死亡照常處理。）',
     actionType: 'none',
-    description: '每晚可發動技能，發動後隔日公布為平安夜，延後所有技能生效',
+    description: '每晚可發動技能。發動後隔日清晨公開平安夜，並在有訓熊師時公開熊沒有叫；真實夜晚資訊與夜晚死亡延後至放逐後結算，白天資訊與死亡不受影響。',
     team: 'wolf',
   },
   {

@@ -2232,7 +2232,7 @@ function buildNightSummary(
         lines.push(`${role.emoji} ${role.name}${who} → ${a.surroundTarget ? `環繞 ${fmt(a.surroundTarget)}（次日不可被投票）` : '未環繞'}`);
         break;
       case 'blood_moon':
-        lines.push(`${role.emoji} ${role.name}${who} → ${a.bloodMoonActivated ? '發動技能（本晚公布平安夜，延後死亡）' : '未發動'}`);
+        lines.push(`${role.emoji} ${role.name}${who} → ${a.bloodMoonActivated ? '發動技能（清晨公布平安夜，延後夜晚資訊與死亡結算）' : '未發動'}`);
         break;
       case 'white_wolf':
         lines.push(`${role.emoji} ${role.name}${who} → 夜晚不能自爆`);

@@ -83,6 +83,42 @@ expectEqual(
 );
 
 expectEqual(
+  'blood moon delayed deaths skip players already dead during the day',
+  resolveAutomaticDeathRounds(
+    [3, 4],
+    'night',
+    [],
+    {},
+    {},
+    [],
+    [],
+    undefined,
+    null,
+    'single',
+    [3, 4],
+  ),
+  [],
+);
+
+expectEqual(
+  'skipped blood moon target does not start a lover death chain',
+  resolveAutomaticDeathRounds(
+    [3],
+    'night',
+    [],
+    {},
+    {},
+    [],
+    [],
+    undefined,
+    [3, 5],
+    'single',
+    [3],
+  ),
+  [],
+);
+
+expectEqual(
   'night death skill uses magician swap before checking dreamwalker immunity',
   resolveTimedDeathSkillTarget(
     5,

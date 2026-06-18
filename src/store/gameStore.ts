@@ -266,9 +266,9 @@ export const DEFAULT_SINGLE_CONFIG: GameConfigSnapshot = {
 };
 
 export const DEFAULT_DUAL_CONFIG: GameConfigSnapshot = {
-  name: '雙身分 6 人預設',
+  name: '雙身分 9 人預設',
   mode: 'dual',
-  playerCount: 6,
+  playerCount: 9,
   selectedRoles: [
     { roleId: 'villager', count: 5 },
     { roleId: 'wild_child', count: 1 },
@@ -276,10 +276,15 @@ export const DEFAULT_DUAL_CONFIG: GameConfigSnapshot = {
     { roleId: 'witch', count: 1 },
     { roleId: 'guard', count: 1 },
     { roleId: 'hunter', count: 1 },
-    { roleId: 'werewolf', count: 1 },
+    { roleId: 'werewolf', count: 2 },
     { roleId: 'white_wolf', count: 1 },
+    { roleId: 'dreamwalker', count: 1 },
+    { roleId: 'gravedigger', count: 1 },
+    { roleId: 'bear_tamer', count: 1 },
+    { roleId: 'witch_hunter', count: 1 },
+    { roleId: 'old_rogue', count: 1 },
   ],
-  goldenBabyConfig: { min: 1, max: 1 },
+  goldenBabyConfig: { min: 2, max: 2 },
   singleWinRule: 'edge',
 };
 

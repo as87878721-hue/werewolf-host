@@ -388,12 +388,25 @@ export default function NightScreen() {
   const explorerResult: number | 'unknown' = (() => {
     const explorer = activeMembers[0];
     if (!explorer || sealedByMummy) return 'unknown';
+    const getLivingDistance = (from: number, to: number, direction: 'cw' | 'ccw') => {
+      let distance = 0;
+      let cursor = from;
+      for (let i = 0; i < totalPlayers; i++) {
+        cursor = direction === 'cw'
+          ? (cursor % totalPlayers) + 1
+          : ((cursor + totalPlayers - 2) % totalPlayers) + 1;
+        if (deadPlayers.includes(cursor)) continue;
+        distance += 1;
+        if (cursor === to) return distance;
+      }
+      return Infinity;
+    };
     let nearestDistance = Infinity;
     let nearestWolves: number[] = [];
     for (const wolf of activeWolfPlayers) {
       if (wolf === explorer) continue;
-      const cw = (wolf - explorer + totalPlayers) % totalPlayers;
-      const ccw = (explorer - wolf + totalPlayers) % totalPlayers;
+      const cw = getLivingDistance(explorer, wolf, 'cw');
+      const ccw = getLivingDistance(explorer, wolf, 'ccw');
       const distance = Math.min(cw, ccw);
       if (distance < nearestDistance) {
         nearestDistance = distance;

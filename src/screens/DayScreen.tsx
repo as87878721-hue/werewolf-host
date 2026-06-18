@@ -136,6 +136,7 @@ export default function DayScreen() {
     currentMagicSwap,
   );
   const sheriffDiedLastNight = sheriffPlayer !== null && nightChainDeaths.includes(sheriffPlayer);
+  const shouldShowSheriffStep = currentNight === 1 || sheriffDiedLastNight;
 
   useEffect(() => {
     navigation.setOptions({
@@ -156,7 +157,7 @@ export default function DayScreen() {
   }, [navigation, currentNight, resetGameProgress]);
 
   // 0=警長  1=公布死亡  2=發言  3=投票  4=放逐結果
-  const [step, setStep] = useState(0);
+  const [step, setStep] = useState(shouldShowSheriffStep ? 0 : 1);
 
   const clearDayStepState = (fromStep: number) => {
     restoreDayStepSnapshot(fromStep);
@@ -331,6 +332,9 @@ export default function DayScreen() {
       navigation.goBack();
     } else if (step === 1 && shouldClearNightDeathStep) {
       clearDayStepState(1);
+    } else if (step === 1 && !shouldShowSheriffStep) {
+      setNightStep(Math.max(nightOrder.length - 1, 0));
+      navigation.goBack();
     } else if (
       step === 2 &&
       (
@@ -1683,7 +1687,7 @@ export default function DayScreen() {
             }
             setExiledPlayer(p => p === n ? null : n);
           },
-          { hideRoles: true, isDisabled: n => !canVoteTarget(n) },
+          { isDisabled: n => !canVoteTarget(n) },
         )}
       </ScrollView>
     );

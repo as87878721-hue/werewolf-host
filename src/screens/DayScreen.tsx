@@ -23,6 +23,7 @@ import {
 } from '../store/gameStore';
 import PlayerButton, { RoleInfo } from '../components/PlayerButton';
 import HeaderMenuButton from '../components/HeaderMenuButton';
+import { hasNightDeathStepTransientState } from '../utils/dayBackState';
 
 type Nav = NativeStackNavigationProp<RootStackParamList, 'Day'>;
 type NightAbility = 'none' | 'hunter' | 'wolfking';
@@ -227,6 +228,7 @@ export default function DayScreen() {
       setNightDeathBadgeResolved(false);
       setBishopTriggerStep(null);
       setBishopRevealTarget(null);
+      setBishopResolved(false);
     }
   };
 
@@ -308,9 +310,25 @@ export default function DayScreen() {
   }, [captureDayStepSnapshot, step]);
 
   const handleBack = () => {
+    const shouldClearNightDeathStep = hasNightDeathStepTransientState({
+      nightDeathRounds,
+      initialNightDeathRounds,
+      handledNightDeathSkills,
+      nightDeathSkillTarget,
+      nightDeathSkillBlocked,
+      nightDeathBadgeAction,
+      nightDeathBadgeRecipient,
+      nightDeathBadgeResolved,
+      bishopTriggerStep,
+      bishopRevealTarget,
+      bishopResolved,
+    });
+
     if (step === 0) {
       setNightStep(Math.max(nightOrder.length - 1, 0));
       navigation.goBack();
+    } else if (step === 1 && shouldClearNightDeathStep) {
+      clearDayStepState(1);
     } else if (
       step === 2 &&
       (

@@ -350,9 +350,9 @@ expectEqual(
 useGameStore.getState().startNewGame('dual');
 
 expectEqual(
-  'dual mode new game uses six player default',
+  'dual mode new game uses nine player default',
   useGameStore.getState().playerCount,
-  6,
+  9,
 );
 
 expectEqual(
@@ -362,17 +362,17 @@ expectEqual(
 );
 
 expectEqual(
-  'dual mode golden baby range defaults to one to one',
+  'dual mode golden baby range defaults to two to two',
   useGameStore.getState().goldenBabyConfig,
-  { min: 1, max: 1 },
+  { min: 2, max: 2 },
 );
 
 useGameStore.getState().setConfigName('測試配置');
 useGameStore.getState().saveCurrentConfig();
 
 expectEqual(
-  'saving current config stores it as last dual config',
-  useGameStore.getState().savedConfigs.dual?.name,
+  'saving current config appends it to saved dual configs',
+  useGameStore.getState().savedConfigs.dual?.at(-1)?.name,
   '測試配置',
 );
 

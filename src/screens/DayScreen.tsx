@@ -30,6 +30,7 @@ type NightAbility = 'none' | 'hunter' | 'wolfking';
 type ExileAbility = 'none' | 'hunter' | 'wolfking' | 'idiot';
 type BadgeAction  = 'handover' | 'tear' | null;
 type KnightResult = 'wolf' | 'good' | null;
+type SpeechDeathNotice = 'self_destruct' | 'knight_good' | 'knight_wolf' | null;
 
 export default function DayScreen() {
   const navigation = useNavigation<Nav>();
@@ -211,6 +212,7 @@ export default function DayScreen() {
       setSpeechBadgeRecipient(null);
       setSpeechBadgeResolved(false);
       setSpeechRevealPlayer(null);
+      setSpeechDeathNotice(null);
       setKnightDuelActive(false);
       setKnightPlayer(null);
       setKnightTarget(null);
@@ -272,6 +274,7 @@ export default function DayScreen() {
   const [speechBadgeRecipient, setSpeechBadgeRecipient] = useState<number | null>(null);
   const [speechBadgeResolved, setSpeechBadgeResolved] = useState(false);
   const [speechRevealPlayer, setSpeechRevealPlayer] = useState<number | null>(null);
+  const [speechDeathNotice, setSpeechDeathNotice] = useState<SpeechDeathNotice>(null);
 
   // Step 3: exile (null=未選, undefined=流票, number=放逐對象)
   const [exiledPlayer, setExiledPlayer] = useState<number | null | undefined>(null);
@@ -340,6 +343,7 @@ export default function DayScreen() {
       (
         pendingSelfDestruct !== null ||
         lastWordsPlayer !== null ||
+        speechDeathNotice !== null ||
         speechDeaths.length > 0 ||
         dayDeathRounds.length > 0 ||
         handledDayDeathSkills.length > 0 ||
@@ -1222,6 +1226,86 @@ export default function DayScreen() {
   const renderSpeech = () => {
     if (pendingDayDeathSkill) return renderDayDeathSkill();
 
+    if (speechDeathNotice !== null) {
+      const noticeSheriffDeathPlayer =
+        localSheriff !== null && dayChainDeaths.includes(localSheriff)
+          ? localSheriff
+          : null;
+      const noticeCanProceed =
+        (
+          noticeSheriffDeathPlayer === null ||
+          (speechBadgeAction !== null && (speechBadgeAction !== 'handover' || speechBadgeRecipient !== null))
+        ) &&
+        (!bishopDiedDayChain || bishopRevealTarget !== null);
+      const noticeButtonText = speechDeathNotice === 'self_destruct'
+        ? '確認死訊，發表遺言'
+        : speechDeathNotice === 'knight_good'
+        ? '確認死訊，進入投票'
+        : '確認死訊，進入夜晚';
+
+      return (
+        <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollPad}>
+          <View style={[styles.banner, styles.bannerDanger]}>
+            <Text style={styles.bannerText}>白天死亡連鎖</Text>
+          </View>
+          {renderDeathRoundDetails(dayDeathRounds, 'speech-death-notice')}
+          {noticeSheriffDeathPlayer !== null && renderBadgeUI(
+            noticeSheriffDeathPlayer,
+            speechBadgeAction, setSpeechBadgeAction,
+            speechBadgeRecipient, setSpeechBadgeRecipient,
+            speechBadgeResolved,
+            (a, r) => {
+              if (a === 'tear') setLocalSheriff(null);
+              else if (a === 'handover' && r !== null) setLocalSheriff(r);
+              setSpeechBadgeAction(a);
+              setSpeechBadgeRecipient(r);
+              setSpeechBadgeResolved(true);
+            },
+            aliveNums,
+          )}
+          {bishopDiedDayChain && renderBishopUI()}
+          <TouchableOpacity
+            style={[styles.nextBtn, !noticeCanProceed && styles.nextBtnOff, { marginTop: 8 }]}
+            disabled={!noticeCanProceed}
+            onPress={() => {
+              if (bishopDiedDayChain && bishopRevealTarget !== null) {
+                setBishopHolder(bishopRevealTarget);
+              }
+              let finalSheriff = localSheriff;
+              if (noticeSheriffDeathPlayer !== null) {
+                if (speechBadgeAction === 'tear') finalSheriff = null;
+                else if (speechBadgeAction === 'handover' && speechBadgeRecipient !== null) {
+                  finalSheriff = speechBadgeRecipient;
+                }
+              }
+              if (stopIfDayWin()) {
+                setSpeechDeathNotice(null);
+                setLastWordsPlayer(null);
+                return;
+              }
+              if (speechDeathNotice === 'knight_wolf') {
+                setSheriff(finalSheriff);
+                endDay({
+                  exiledPlayer: undefined,
+                  isIdiotFlip: false,
+                  nightChainDeaths,
+                  dayKills: dayChainDeaths,
+                });
+                navigation.navigate('Night');
+                return;
+              }
+              if (noticeSheriffDeathPlayer !== null) setLocalSheriff(finalSheriff);
+              const resumeAtVote = speechDeathNotice === 'knight_good';
+              setSpeechDeathNotice(null);
+              if (resumeAtVote) setStep(3);
+            }}
+          >
+            <Text style={styles.nextBtnText}>{noticeButtonText}</Text>
+          </TouchableOpacity>
+        </ScrollView>
+      );
+    }
+
     if (speechRevealPlayer !== null) {
       const slot = getSpeechRoleSlot(speechRevealPlayer);
       return (
@@ -1512,6 +1596,7 @@ export default function DayScreen() {
                 setSpeechDeaths(prev => [...prev, pendingSelfDestruct]);
                 appendDayDeathRounds([pendingSelfDestruct]);
                 setLastWordsPlayer(pendingSelfDestruct);
+                setSpeechDeathNotice('self_destruct');
                 setPendingSelfDestruct(null);
               }}
             >
@@ -2109,32 +2194,8 @@ export default function DayScreen() {
         setKnightDuelResolved(true);
         setKnightUsed(true);
         setKnightDuelActive(false);
-        if (targetIsWolf) {
-          if (stopIfDayWin(kills)) return;
-          setSheriff(localSheriff);
-          endDay({
-            exiledPlayer: undefined,
-            isIdiotFlip: false,
-            nightChainDeaths,
-            dayKills: [...dayChainDeaths, ...kills],
-          });
-          navigation.navigate('Night');
-          return;
-        }
-        setStep(3);
-        return;
-      }
-      // 騎士撞到狼（已解算舊路徑，保留相容）
-      if (knightDuelResolved && knightEndsDay) {
-        if (stopIfDayWin(knightDuelKills)) return;
-        setSheriff(localSheriff);
-        endDay({
-          exiledPlayer: undefined,
-          isIdiotFlip: false,
-          nightChainDeaths,
-          dayKills: [...dayChainDeaths, ...knightDuelKills],
-        });
-        navigation.navigate('Night');
+        appendDayDeathRounds(kills);
+        setSpeechDeathNotice(targetIsWolf ? 'knight_wolf' : 'knight_good');
         return;
       }
       setStep(3);
@@ -2357,7 +2418,11 @@ export default function DayScreen() {
             </Text>
           </TouchableOpacity>
         )}
-        {!(step === 2 && (pendingSelfDestruct !== null || (lastWordsPlayer !== null && !pendingDayDeathSkill))) && (
+        {!(step === 2 && (
+          pendingSelfDestruct !== null ||
+          speechDeathNotice !== null ||
+          (lastWordsPlayer !== null && !pendingDayDeathSkill)
+        )) && (
           <TouchableOpacity
             style={[styles.nextBtn, !canAdvance() && styles.nextBtnOff]}
             onPress={handleNext}

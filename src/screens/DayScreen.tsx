@@ -209,6 +209,7 @@ export default function DayScreen() {
       setSpeechBadgeAction(null);
       setSpeechBadgeRecipient(null);
       setSpeechBadgeResolved(false);
+      setSpeechRevealPlayer(null);
       setKnightDuelActive(false);
       setKnightPlayer(null);
       setKnightTarget(null);
@@ -269,6 +270,7 @@ export default function DayScreen() {
   const [speechBadgeAction, setSpeechBadgeAction] = useState<BadgeAction>(null);
   const [speechBadgeRecipient, setSpeechBadgeRecipient] = useState<number | null>(null);
   const [speechBadgeResolved, setSpeechBadgeResolved] = useState(false);
+  const [speechRevealPlayer, setSpeechRevealPlayer] = useState<number | null>(null);
 
   // Step 3: exile (null=未選, undefined=流票, number=放逐對象)
   const [exiledPlayer, setExiledPlayer] = useState<number | null | undefined>(null);
@@ -592,17 +594,32 @@ export default function DayScreen() {
 
   // ── Self-destruct helpers ──────────────────────────────────────────────
   const canSelfDestruct = (n: number): boolean => {
-    if (!isDualMode) return true;
-    const role = getActiveDayRole(n);
+    const role = isDualMode
+      ? getActiveDayRole(n)
+      : Object.entries(roleMembersMap).find(([, members]) => (members ?? []).includes(n))?.[0];
     if (!role) return false;
     const def = ROLES.find(r => r.id === role);
     return def?.team === 'wolf' || role === 'old_rogue';
   };
 
   const selfDestructEndsDay = (n: number): boolean => {
-    if (!isDualMode) return false;
-    const role = getActiveDayRole(n);
+    const role = isDualMode
+      ? getActiveDayRole(n)
+      : Object.entries(roleMembersMap).find(([, members]) => (members ?? []).includes(n))?.[0];
     return ROLES.find(r => r.id === role)?.team === 'wolf';
+  };
+
+  const getSpeechRole = (n: number): string | undefined => {
+    if (isDualMode) return getActiveDayRole(n);
+    return Object.entries(roleMembersMap).find(([, members]) => (members ?? []).includes(n))?.[0];
+  };
+
+  const getSpeechRoleSlot = (n: number): 'upper' | 'lower' => {
+    if (!isDualMode) return 'upper';
+    const upperIsDead =
+      upperDeadPlayers.includes(n) ||
+      (nightChainComplete && nightChainDeaths.includes(n));
+    return upperIsDead ? 'lower' : 'upper';
   };
 
   const handleWolfSelfDestructEnd = (finalSheriff: number | null, extraDayKills: number[] = []) => {
@@ -1201,6 +1218,52 @@ export default function DayScreen() {
   const renderSpeech = () => {
     if (pendingDayDeathSkill) return renderDayDeathSkill();
 
+    if (speechRevealPlayer !== null) {
+      const slot = getSpeechRoleSlot(speechRevealPlayer);
+      return (
+        <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollPad}>
+          <View style={[styles.banner, { borderColor: Colors.warning }]}>
+            <Text style={[styles.bannerText, { color: Colors.warning }]}>
+              {speechRevealPlayer} 號身分未定
+            </Text>
+            <Text style={[styles.hint, { marginTop: 6, textAlign: 'center' }]}>
+              請補上{isDualMode ? (slot === 'upper' ? '上牌' : '下牌') : ''}身分
+            </Text>
+          </View>
+          <View style={styles.revealRoleGrid}>
+            {revealableRoles.map(role => (
+              <TouchableOpacity
+                key={`speech-${speechRevealPlayer}-${role.id}`}
+                style={[
+                  styles.revealRoleBtn,
+                  { borderColor: role.team === 'wolf' ? Colors.wolf : Colors.village },
+                ]}
+                onPress={() => {
+                  setPlayerCardRole(speechRevealPlayer, slot, role.id);
+                  setSpeechRevealPlayer(null);
+                }}
+              >
+                <Text
+                  style={[
+                    styles.revealRoleText,
+                    { color: role.team === 'wolf' ? Colors.wolf : Colors.village },
+                  ]}
+                >
+                  {role.name}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+          <TouchableOpacity
+            style={[styles.abilityBtn, { marginTop: 8 }]}
+            onPress={() => setSpeechRevealPlayer(null)}
+          >
+            <Text style={styles.abilityBtnText}>取消</Text>
+          </TouchableOpacity>
+        </ScrollView>
+      );
+    }
+
     // Sub-phase: last words
     if (lastWordsPlayer !== null) {
       const lwRole = isDualMode ? getActiveDayRole(lastWordsPlayer) : undefined;
@@ -1455,59 +1518,55 @@ export default function DayScreen() {
       );
     }
 
-    // Sub-phase: select
-    const eligibleNums = playerNums.filter(p => {
-      if (deadPlayers.includes(p)) return false;
-      if (resolvedDayDeaths.includes(p)) return false;
-      if (nightChainDeaths.includes(p)) {
-        // 雙身分上牌剛死 → 以下牌判斷是否可自爆
-        if (isDualMode && !upperDeadPlayers.includes(p)) return canSelfDestruct(p);
-        return false;
-      }
-      return canSelfDestruct(p);
-    });
-
     const knightActivePlayer = (knightInGame && !knightUsed && !knightDuelResolved)
       ? aliveNums.find(p => hasActiveRole(p, 'knight'))
       : undefined;
 
-    const actionNums = [
-      ...eligibleNums,
-      ...(knightActivePlayer !== undefined ? [knightActivePlayer] : []),
-    ].sort((a, b) => a - b);
+    const speechNums = playerNums;
+    const canSpeak = (p: number) => aliveNums.includes(p);
+    const getSpeechActionLabel = (p: number): string | undefined => {
+      if (!canSpeak(p)) return undefined;
+      if (getSpeechRole(p) === undefined) return '?';
+      if (p === knightActivePlayer) return '⚔️';
+      if (canSelfDestruct(p)) return '爆';
+      return undefined;
+    };
 
     return (
       <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollPad}>
         {!knightDuelActive ? (
-          actionNums.length > 0 ? (
-            <>
-              <Text style={styles.hint}>點選發動技能（可跳過）</Text>
-              {renderGrid(
-                playerNums,
-                n => !actionNums.includes(n)
-                  ? disabledGridStyle
-                  : n === knightActivePlayer
-                  ? { bg: Colors.village + '25', border: Colors.village, textColor: Colors.village }
-                  : { bg: Colors.surface, border: Colors.surfaceLight, textColor: Colors.textDim },
-                n => n === knightActivePlayer ? '⚔️' : undefined,
-                n => {
-                  if (!actionNums.includes(n)) return;
-                  if (n === knightActivePlayer) {
-                    setKnightPlayer(n);
-                    setKnightDuelActive(true);
-                  } else {
-                    setPendingSelfDestruct(n);
-                  }
-                },
-                { isDisabled: n => !actionNums.includes(n) },
-              )}
-            </>
-          ) : (
-            <View style={styles.peaceBox}>
-              <Text style={styles.peaceEmoji}>💬</Text>
-              <Text style={styles.peaceText}>本輪無可發動技能的玩家</Text>
-            </View>
-          )
+          <>
+            <Text style={styles.hint}>點選發言玩家；未定義身分可先補身分</Text>
+            {renderGrid(
+              speechNums,
+              n => !canSpeak(n)
+                ? disabledGridStyle
+                : n === knightActivePlayer
+                ? { bg: Colors.village + '25', border: Colors.village, textColor: Colors.village }
+                : canSelfDestruct(n)
+                ? { bg: Colors.wolf + '18', border: Colors.wolf, textColor: Colors.wolf }
+                : getSpeechRole(n) === undefined
+                ? { bg: Colors.warning + '12', border: Colors.warning, textColor: Colors.warning }
+                : { bg: Colors.surface, border: Colors.surfaceLight, textColor: Colors.textDim },
+              getSpeechActionLabel,
+              n => {
+                if (!canSpeak(n)) return;
+                if (getSpeechRole(n) === undefined) {
+                  setSpeechRevealPlayer(n);
+                  return;
+                }
+                if (n === knightActivePlayer) {
+                  setKnightPlayer(n);
+                  setKnightDuelActive(true);
+                  return;
+                }
+                if (canSelfDestruct(n)) {
+                  setPendingSelfDestruct(n);
+                }
+              },
+              { isDisabled: n => !canSpeak(n) },
+            )}
+          </>
         ) : (
           <>
             <Text style={styles.hint}>⚔️ 騎士（{knightPlayer} 號）發動決鬥 — 選擇決鬥對象</Text>

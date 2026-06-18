@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import { Modal, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Colors } from '../theme/colors';
 import { GameLogEntry, useGameStore } from '../store/gameStore';
@@ -44,9 +44,11 @@ function buildGroups(entries: GameLogEntry[]): LogGroup[] {
 }
 
 export default function HeaderMenuButton({ onBack }: { onBack: () => void }) {
+  const buttonRef = useRef<View>(null);
   const [open, setOpen] = useState(false);
   const [logOpen, setLogOpen] = useState(false);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const [menuFrame, setMenuFrame] = useState<{ x: number; y: number; width: number; height: number } | null>(null);
   const [pick, setPick] = useState<{ player: number; direction: '順' | '逆' } | null>(null);
   const playerCount = useGameStore(state => state.playerCount);
   const gameLog = useGameStore(state => state.gameLog);
@@ -61,12 +63,32 @@ export default function HeaderMenuButton({ onBack }: { onBack: () => void }) {
 
   return (
     <View style={styles.root}>
-      <TouchableOpacity style={styles.menuButton} onPress={() => setOpen(value => !value)} activeOpacity={0.82}>
-        <Text style={styles.menuText}>∨</Text>
+      <TouchableOpacity
+        ref={buttonRef as any}
+        style={styles.menuButton}
+        onPress={() => {
+          buttonRef.current?.measureInWindow((x, y, width, height) => {
+            setMenuFrame({ x, y, width, height });
+            setOpen(value => !value);
+          });
+        }}
+        activeOpacity={0.82}
+      >
+        <Text style={styles.menuText}>‹</Text>
       </TouchableOpacity>
 
-      {open && (
-        <View style={styles.dropdown}>
+      <Modal visible={open} transparent animationType="fade" onRequestClose={() => setOpen(false)}>
+        <TouchableOpacity style={styles.menuBackdrop} activeOpacity={1} onPress={() => setOpen(false)}>
+          {menuFrame && (
+            <View
+              style={[
+                styles.dropdown,
+                {
+                  top: menuFrame.y,
+                  left: Math.max(8, menuFrame.x - DROPDOWN_WIDTH - 8),
+                },
+              ]}
+            >
           <TouchableOpacity
             style={styles.roundButton}
             onPress={() => {
@@ -93,8 +115,10 @@ export default function HeaderMenuButton({ onBack }: { onBack: () => void }) {
           >
             <Text style={styles.roundText}>記</Text>
           </TouchableOpacity>
-        </View>
-      )}
+            </View>
+          )}
+        </TouchableOpacity>
+      </Modal>
 
       <Modal visible={logOpen} transparent animationType="fade" onRequestClose={() => setLogOpen(false)}>
         <View style={styles.backdrop}>
@@ -145,6 +169,7 @@ export default function HeaderMenuButton({ onBack }: { onBack: () => void }) {
 }
 
 const MENU_SIZE = 42;
+const DROPDOWN_WIDTH = MENU_SIZE * 3 + 8 * 2 + 8 * 2;
 
 const styles = StyleSheet.create({
   root: {
@@ -164,7 +189,9 @@ const styles = StyleSheet.create({
   },
   menuText: { color: Colors.text, fontSize: 22, fontWeight: 'bold', lineHeight: 24 },
   dropdown: {
+    position: 'absolute',
     flexDirection: 'row',
+    width: DROPDOWN_WIDTH,
     gap: 8,
     padding: 8,
     borderRadius: 999,
@@ -173,8 +200,11 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.surface,
     alignItems: 'center',
     justifyContent: 'center',
-    marginTop: 8,
     zIndex: 30,
+  },
+  menuBackdrop: {
+    flex: 1,
+    backgroundColor: 'transparent',
   },
   roundButton: {
     width: MENU_SIZE,

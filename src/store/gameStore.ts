@@ -54,6 +54,9 @@ export interface NightRecord {
   summary: string[];
 }
 
+type RoleCardSlot = 'upper' | 'lower';
+type PlayerRoleCard = { player: number; slot: RoleCardSlot };
+
 export interface GoldenBabyConfig {
   min: number;
   max: number;
@@ -301,6 +304,7 @@ interface GameState {
   lostVotePlayers: number[];
   idiotFlippedPlayers: number[];
   anubisScaledPlayers: number[];
+  anubisScaledCards: PlayerRoleCard[];
   cupidLovers: [number, number] | null;
   bishopHolder: number | null;
   knightUsed: boolean;
@@ -384,6 +388,7 @@ interface GameUndoSnapshot {
   lostVotePlayers: number[];
   idiotFlippedPlayers: number[];
   anubisScaledPlayers: number[];
+  anubisScaledCards: PlayerRoleCard[];
   cupidLovers: [number, number] | null;
   bishopHolder: number | null;
   knightUsed: boolean;
@@ -425,6 +430,7 @@ function createGameUndoSnapshot(state: GameState): GameUndoSnapshot {
     lostVotePlayers: [...state.lostVotePlayers],
     idiotFlippedPlayers: [...state.idiotFlippedPlayers],
     anubisScaledPlayers: [...state.anubisScaledPlayers],
+    anubisScaledCards: state.anubisScaledCards.map(card => ({ ...card })),
     cupidLovers: state.cupidLovers ? [...state.cupidLovers] as [number, number] : null,
     bishopHolder: state.bishopHolder,
     knightUsed: state.knightUsed,
@@ -465,6 +471,7 @@ function restoreGameUndoSnapshot(snapshot: GameUndoSnapshot) {
     lostVotePlayers: [...snapshot.lostVotePlayers],
     idiotFlippedPlayers: [...snapshot.idiotFlippedPlayers],
     anubisScaledPlayers: [...snapshot.anubisScaledPlayers],
+    anubisScaledCards: snapshot.anubisScaledCards.map(card => ({ ...card })),
     cupidLovers: snapshot.cupidLovers ? [...snapshot.cupidLovers] as [number, number] : null,
     bishopHolder: snapshot.bishopHolder,
     knightUsed: snapshot.knightUsed,
@@ -484,6 +491,34 @@ function restoreGameUndoSnapshot(snapshot: GameUndoSnapshot) {
     winResult: snapshot.winResult ? { ...snapshot.winResult } : null,
     gameLog: snapshot.gameLog.map(log => ({ ...log })),
   };
+}
+
+function getActiveRoleCardSlot(player: number, upperDeadPlayers: number[]): RoleCardSlot {
+  return upperDeadPlayers.includes(player) ? 'lower' : 'upper';
+}
+
+function getAnubisScaledCardsForTargets(
+  targets: number[],
+  gameMode: GameMode,
+  upperDeadPlayers: number[],
+): PlayerRoleCard[] {
+  if (gameMode !== 'dual') return [];
+  return targets.map(player => ({
+    player,
+    slot: getActiveRoleCardSlot(player, upperDeadPlayers),
+  }));
+}
+
+function mergeRoleCards(cards: PlayerRoleCard[]): PlayerRoleCard[] {
+  const seen = new Set<string>();
+  const result: PlayerRoleCard[] = [];
+  for (const card of cards) {
+    const key = `${card.player}:${card.slot}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(card);
+  }
+  return result;
 }
 
 export const useGameStore = create<GameState>((set, get) => ({
@@ -507,6 +542,7 @@ export const useGameStore = create<GameState>((set, get) => ({
   lostVotePlayers: [],
   idiotFlippedPlayers: [],
   anubisScaledPlayers: [],
+  anubisScaledCards: [],
   cupidLovers: null,
   bishopHolder: null,
   knightUsed: false,
@@ -663,7 +699,7 @@ export const useGameStore = create<GameState>((set, get) => ({
   },
 
   recordAction: (action) => {
-    const { nightActions, currentStep, checkedPlayers } = get();
+    const { nightActions, currentStep, checkedPlayers, gameMode, upperDeadPlayers } = get();
     const updated = [...nightActions];
     updated[currentStep] = action;
     const magicSwap = getMagicSwap(updated);
@@ -683,7 +719,14 @@ export const useGameStore = create<GameState>((set, get) => ({
     }
 
     if (action.roleId === 'anubis' && (action.anubisTargets?.length ?? 0) === 2) {
-      set(state => ({ anubisScaledPlayers: [...new Set([...state.anubisScaledPlayers, ...applyMagicSwapTargets(action.anubisTargets, magicSwap)!])] }));
+      const resolvedTargets = applyMagicSwapTargets(action.anubisTargets, magicSwap)!;
+      set(state => ({
+        anubisScaledPlayers: [...new Set([...state.anubisScaledPlayers, ...resolvedTargets])],
+        anubisScaledCards: mergeRoleCards([
+          ...state.anubisScaledCards,
+          ...getAnubisScaledCardsForTargets(resolvedTargets, gameMode, upperDeadPlayers),
+        ]),
+      }));
     }
 
     if (action.roleId === 'golden_baby') {
@@ -885,6 +928,12 @@ export const useGameStore = create<GameState>((set, get) => ({
             ...resolvedAnubisTargets,
           ])]
         : state.anubisScaledPlayers,
+      anubisScaledCards: anubisAction
+        ? mergeRoleCards([
+            ...state.anubisScaledCards.filter(card => !anubisAction.anubisTargets!.includes(card.player)),
+            ...getAnubisScaledCardsForTargets(resolvedAnubisTargets, gameMode, upperDeadPlayers),
+          ])
+        : state.anubisScaledCards,
     }));
     for (const line of summary) {
       if (line.trim() !== '') get().appendLog('夜晚結算', line);
@@ -988,6 +1037,7 @@ export const useGameStore = create<GameState>((set, get) => ({
     lostVotePlayers: [],
     idiotFlippedPlayers: [],
     anubisScaledPlayers: [],
+    anubisScaledCards: [],
     cupidLovers: null,
     bishopHolder: null,
     knightUsed: false,
@@ -1033,6 +1083,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       lostVotePlayers: [],
       idiotFlippedPlayers: [],
       anubisScaledPlayers: [],
+      anubisScaledCards: [],
       cupidLovers: null,
       bishopHolder: null,
       knightUsed: false,

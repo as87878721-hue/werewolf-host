@@ -85,7 +85,7 @@ export default function NightScreen() {
     nightActions, nightHistory, saveUsed, poisonUsed, checkedPlayers,
     roleMembersMap, deadPlayers, upperDeadPlayers, playerCardMap,
     winResult,
-    lastDayExileInfo, lastDayExiledRoleId, sharpshooterUsed, anubisScaledPlayers, cupidLovers,
+    lastDayExileInfo, lastDayExiledRoleId, sharpshooterUsed, anubisScaledPlayers, anubisScaledCards, cupidLovers,
     goldenBabyConfig, goldenBabyPlayers, spiritWolfMimic, spiritWolfSaveUsed, spiritWolfPoisonUsed, mummySealedRoles, monkVoteTarget, monkVoteCard, fireWolfBurnedPlayers, fireWolfBurnedCards, fireWolfUsed, slaveTraderSlaves,
     recordAction, captureNightStepSnapshot, nextStep, prevStep, rewindNightStep, finishNight, resetNight, resetGameProgress, setRoleMembers, transformThief, setGoldenBabyPlayers,
   } = useGameStore();
@@ -94,6 +94,14 @@ export default function NightScreen() {
 
   const totalPlayers = playerCount;
   const playerNums = Array.from({ length: totalPlayers }, (_, i) => i + 1);
+  const isAnubisScaledTargetLocked = (num: number): boolean => {
+    if (!isDualMode) return anubisScaledPlayers.includes(num);
+    return anubisScaledCards.some(card => {
+      if (card.player !== num || deadPlayers.includes(num)) return false;
+      if (card.slot === 'upper') return !upperDeadPlayers.includes(num);
+      return upperDeadPlayers.includes(num);
+    });
+  };
   const COLS = totalPlayers > 12 ? 5 : 4;
   const GAP = 6;
   // 限制最大 390px（web 的 useWindowDimensions 回傳全瀏覽器寬）
@@ -616,8 +624,8 @@ export default function NightScreen() {
       if (roleId === 'crow' && activeKey === 'surround' && members.includes(num)) return;
       // 守衛不可連續守同一人
       if (roleId === 'guard' && activeKey === 'protect' && num === lastGuardProtect) return;
-      // 阿努比斯：已上過天平的玩家不可再選
-      if (roleId === 'anubis' && activeKey === 'scale' && anubisScaledPlayers.includes(num)) return;
+      // 阿努比斯：已上過天平且仍存活的角色牌不可再選
+      if (roleId === 'anubis' && activeKey === 'scale' && isAnubisScaledTargetLocked(num)) return;
       const effectiveMax = roleId === 'tengu' && activeKey === 'kill' ? tenguMaxKills : def.maxTargets;
       setActionTargets(prev => {
         const curr = prev[activeKey] ?? [];
@@ -794,8 +802,8 @@ export default function NightScreen() {
     // 烏鴉不可選自己 → 灰暗禁止
     if (roleId === 'crow' && activeKey === 'surround' && members.includes(num))
       return { bg: Colors.textMuted + '20', border: Colors.textMuted, textColor: Colors.textMuted };
-    // 阿努比斯：已上過天平的玩家禁止再選 → 灰暗禁止
-    if (roleId === 'anubis' && activeKey === 'scale' && anubisScaledPlayers.includes(num))
+    // 阿努比斯：已上過天平且仍存活的角色牌禁止再選 → 灰暗禁止
+    if (roleId === 'anubis' && activeKey === 'scale' && isAnubisScaledTargetLocked(num))
       return { bg: Colors.textMuted + '20', border: Colors.textMuted, textColor: Colors.textMuted };
     // 通用行動目標（預言家已在上方處理，不走此分支）
     for (const [key, targets] of Object.entries(actionTargets)) {
@@ -824,7 +832,7 @@ export default function NightScreen() {
     }
     if (roleId === 'witch' && witchChoice === 'poison' && poisonTarget === num) return '毒';
     if (roleId === 'witch' && witchChoice === 'save' && num === wolfKillTarget) return '救';
-    if (roleId === 'anubis' && activeKey === 'scale' && anubisScaledPlayers.includes(num)) return '⛔';
+    if (roleId === 'anubis' && activeKey === 'scale' && isAnubisScaledTargetLocked(num)) return '⛔';
     for (const [key, targets] of Object.entries(actionTargets)) {
       const idx = targets.indexOf(num);
       if (idx !== -1) {

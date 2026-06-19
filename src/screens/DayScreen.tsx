@@ -12,7 +12,7 @@ import {
   computeNightDeaths,
   getMagicSwap,
   applyMagicSwapTarget,
-  getEffectiveDreamwalkerTarget,
+  getPreviousDreamwalkerTarget,
   resolveDreamwalkerCarryDeaths,
   resolveAutomaticDeathRounds,
   getDeathSkillTriggers,
@@ -54,8 +54,7 @@ export default function DayScreen() {
   const btnSize = Math.min(72, Math.floor((effectiveWidth - 32 - (COLS - 1) * GAP) / COLS));
 
   // Actual deaths (regardless of blood moon)
-  // finishNight added current night at -1; previous night's dreamwalker target is at -2
-  const prevDreamwalkerTarget = getEffectiveDreamwalkerTarget(nightHistory.at(-2)?.actions ?? []);
+  const prevDreamwalkerTarget = getPreviousDreamwalkerTarget(nightHistory, currentNight);
   const directNightDeaths = computeNightDeaths(
     nightActions,
     roleMembersMap,

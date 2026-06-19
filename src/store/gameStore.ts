@@ -903,8 +903,14 @@ export const useGameStore = create<GameState>((set, get) => ({
 
   finishNight: () => {
     const { nightActions: rawActions, currentNight, roleMembersMap, playerCardMap, upperDeadPlayers, deadPlayers, playerCount, nightHistory, cupidLovers, gameMode } = get();
+    const existingRecord = [...nightHistory]
+      .reverse()
+      .find(record => record.nightNumber === currentNight);
+    if (existingRecord && JSON.stringify(existingRecord.actions) === JSON.stringify(rawActions)) {
+      return existingRecord;
+    }
     const totalPlayers = playerCount;
-    const prevDreamwalkerTarget = getEffectiveDreamwalkerTarget(nightHistory.at(-1)?.actions ?? []);
+    const prevDreamwalkerTarget = getPreviousDreamwalkerTarget(nightHistory, currentNight);
     const finalMagicSwap = getMagicSwap(rawActions);
     // 夜晚所有角色記錄完畢後，自動計算訓熊師結果
     const nightActions = rawActions.map(a => {
@@ -924,7 +930,10 @@ export const useGameStore = create<GameState>((set, get) => ({
     const summary = buildNightSummary(nightActions, roleMembersMap, playerCardMap, upperDeadPlayers, prevDreamwalkerTarget, resolvedCupidLovers, gameMode);
     const record: NightRecord = { nightNumber: currentNight, actions: nightActions, summary };
     set(state => ({
-      nightHistory: [...state.nightHistory, record],
+      nightHistory: [
+        ...state.nightHistory.filter(entry => entry.nightNumber !== currentNight),
+        record,
+      ],
       nightActions,
       cupidLovers: resolvedCupidLovers,
       anubisScaledPlayers: anubisAction
@@ -950,10 +959,9 @@ export const useGameStore = create<GameState>((set, get) => ({
     const {
       nightActions, deadPlayers, upperDeadPlayers, gameMode, roleMembersMap, playerCardMap,
       nightHistory, cupidLovers, slaveTraderSlaves, singleWinRule, selectedRoles,
-      goldenBabyPlayers, fireWolfBurnedPlayers,
+      goldenBabyPlayers, fireWolfBurnedPlayers, currentNight,
     } = get();
-    // finishNight already added current night to history; prev night is at -2
-    const prevDreamwalkerTarget = getEffectiveDreamwalkerTarget(nightHistory.at(-2)?.actions ?? []);
+    const prevDreamwalkerTarget = getPreviousDreamwalkerTarget(nightHistory, currentNight);
     const newDeaths = computeNightDeaths(nightActions, roleMembersMap, playerCardMap, upperDeadPlayers, prevDreamwalkerTarget, cupidLovers, gameMode, true, slaveTraderSlaves);
 
     if (gameMode === 'dual') {
@@ -1125,9 +1133,9 @@ export const useGameStore = create<GameState>((set, get) => ({
       lostVotePlayers, idiotFlippedPlayers, roleMembersMap, playerCardMap,
       nightHistory, cupidLovers, sharpshooterUsed, slaveTraderSlaves,
       singleWinRule, selectedRoles, goldenBabyPlayers, fireWolfBurnedPlayers,
+      currentNight,
     } = get();
-    // finishNight already added current night to history; prev night is at -2
-    const prevDreamwalkerTarget = getEffectiveDreamwalkerTarget(nightHistory.at(-2)?.actions ?? []);
+    const prevDreamwalkerTarget = getPreviousDreamwalkerTarget(nightHistory, currentNight);
     const computedNightDeaths = computeNightDeaths(nightActions, roleMembersMap, playerCardMap, upperDeadPlayers, prevDreamwalkerTarget, cupidLovers, gameMode, true, slaveTraderSlaves);
     const nightDeaths = [...new Set(nightChainDeaths ?? computedNightDeaths)];
 
@@ -1468,6 +1476,16 @@ export function getGravediggerLowerInfo(
 export function getEffectiveDreamwalkerTarget(actions: NightAction[]): number | undefined {
   const target = actions.find(a => a.roleId === 'dreamwalker')?.dreamwalkerTarget;
   return applyMagicSwapTarget(target, getMagicSwap(actions));
+}
+
+export function getPreviousDreamwalkerTarget(
+  history: NightRecord[],
+  currentNight: number,
+): number | undefined {
+  const previousNight = [...history]
+    .reverse()
+    .find(record => record.nightNumber < currentNight);
+  return getEffectiveDreamwalkerTarget(previousNight?.actions ?? []);
 }
 
 export function getActiveNightRoleMembers(
@@ -2283,7 +2301,15 @@ function buildNightSummary(
   const poisonedByGuardSave = guardBySave;
 
   lines.push('');
-  if (dreamwalkerProtect !== undefined) lines.push(`💤 ${fmt(dreamwalkerProtect)} 受攝夢人保護，免疫本晚所有傷害`);
+  const consecutiveDreamwalk =
+    prevDreamwalkerTarget !== undefined &&
+    dreamwalkerProtect !== undefined &&
+    dreamwalkerProtect === prevDreamwalkerTarget;
+  if (dreamwalkerProtect !== undefined) {
+    lines.push(consecutiveDreamwalk
+      ? `💤 ${fmt(dreamwalkerProtect)} 被連續兩晚攝夢，保護失效並死亡`
+      : `💤 ${fmt(dreamwalkerProtect)} 受攝夢人保護，免疫本晚所有傷害`);
+  }
   if (killBlocked) lines.push(`（${fmt(wolfKill!)} 受到保護，免於死亡）`);
   if (poisonedByGuardSave) lines.push(`（${fmt(wolfKill!)} 守衛＋解藥同時作用，解藥視為毒藥，仍死亡）`);
 

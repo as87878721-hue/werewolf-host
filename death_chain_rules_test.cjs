@@ -20,6 +20,7 @@ const {
   resolveAutomaticDeathRounds,
   resolveTimedDeathSkillTarget,
   getGravediggerLowerInfo,
+  getPreviousDreamwalkerTarget,
   useGameStore,
 } = require('./src/store/gameStore.ts');
 
@@ -45,6 +46,62 @@ expectEqual(
     { dreamwalker: [2] },
   ),
   [[2], [6]],
+);
+
+expectEqual(
+  'duplicate current-night records are not treated as the previous night',
+  getPreviousDreamwalkerTarget([
+    { nightNumber: 1, actions: [{ roleId: 'dreamwalker', members: [2], dreamwalkerTarget: 3 }], summary: [] },
+    { nightNumber: 1, actions: [{ roleId: 'dreamwalker', members: [2], dreamwalkerTarget: 3 }], summary: [] },
+  ], 1),
+  undefined,
+);
+
+expectEqual(
+  'previous dreamwalker target is selected by night number',
+  getPreviousDreamwalkerTarget([
+    { nightNumber: 1, actions: [{ roleId: 'dreamwalker', members: [2], dreamwalkerTarget: 3 }], summary: [] },
+    { nightNumber: 2, actions: [{ roleId: 'dreamwalker', members: [2], dreamwalkerTarget: 4 }], summary: [] },
+  ], 2),
+  3,
+);
+
+expectEqual(
+  'blood moon hunter cannot kill the current dreamwalker protected target',
+  resolveTimedDeathSkillTarget(
+    3,
+    'night',
+    [{ roleId: 'dreamwalker', members: [2], dreamwalkerTarget: 3 }],
+    { dreamwalker: [2] },
+    {},
+    [],
+    undefined,
+    'dual',
+  ),
+  undefined,
+);
+
+useGameStore.setState({
+  currentNight: 1,
+  nightActions: [
+    { roleId: 'dreamwalker', members: [2], dreamwalkerTarget: 3 },
+    { roleId: 'werewolf', members: [6], killTarget: 7 },
+  ],
+  nightHistory: [],
+  roleMembersMap: { dreamwalker: [2], werewolf: [6] },
+  playerCardMap: {},
+  upperDeadPlayers: [],
+  deadPlayers: [],
+  cupidLovers: null,
+  gameMode: 'single',
+  gameLog: [],
+});
+useGameStore.getState().finishNight();
+useGameStore.getState().finishNight();
+expectEqual(
+  'finishing the same night twice stores only one night record',
+  useGameStore.getState().nightHistory.map(record => record.nightNumber),
+  [1],
 );
 
 expectEqual(

@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect } from 'react';
+﻿import React, { useState, useEffect, useRef } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView, useWindowDimensions,
 } from 'react-native';
@@ -2207,12 +2207,6 @@ export default function DayScreen() {
 
     return (
       <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollPad}>
-        <View style={[styles.banner, noVote ? styles.bannerNeutral : styles.bannerDanger]}>
-          <Text style={styles.bannerText}>
-            {noVote ? '🗳️  流票 — 今天無人被放逐' : `☠️  ${exiledPlayer} 號 被放逐出局`}
-          </Text>
-        </View>
-
         {/* 放逐警長 → 警徽處理 */}
         {resultSheriffDeathPlayer !== null && !(sheriffExiled && isIdiotFlip) && renderBadgeUI(
           resultSheriffDeathPlayer,
@@ -2367,6 +2361,82 @@ export default function DayScreen() {
   // ── Navigation ─────────────────────────────────────────────────────────
   const goHome = () => navigation.dispatch(CommonActions.reset({ index: 0, routes: [{ name: 'Home' }] }));
 
+  const finishDay = () => {
+    const isIdiotFlip = exileAbilityResolved && exileAbility === 'idiot';
+    const exileKills: number[] = [];
+    if ((exileAbilityResolved || exileAbility === 'hunter' || exileAbility === 'wolfking') &&
+        exileAbilityTarget !== null &&
+        (exileAbility === 'hunter' || exileAbility === 'wolfking')) {
+      exileKills.push(exileAbilityTarget);
+    }
+    let finalSheriff = localSheriff;
+    const sheriffExiledNow = typeof exiledPlayer === 'number' && exiledPlayer === localSheriff;
+    const sheriffKilledInDayChain = localSheriff !== null && dayChainDeaths.includes(localSheriff);
+    const sheriffKilledInDelayedNight = delayedDeathAnnouncementRequired &&
+      localSheriff !== null && completeDelayedNightDeaths.includes(localSheriff);
+    if ((sheriffKilledInDayChain || sheriffKilledInDelayedNight || (sheriffExiledNow && !isIdiotFlip))) {
+      if (exileBadgeAction === 'tear') finalSheriff = null;
+      else if (exileBadgeAction === 'handover' && exileBadgeRecipient !== null) finalSheriff = exileBadgeRecipient;
+    }
+    setSheriff(finalSheriff);
+    if ((bishopDiedExile || bishopDiedBloodMoon || bishopDiedDayChain) && bishopRevealTarget !== null) {
+      setBishopHolder(bishopRevealTarget);
+    }
+    endDay({
+      exiledPlayer: typeof exiledPlayer === 'number' ? exiledPlayer : undefined,
+      isIdiotFlip,
+      nightChainDeaths: delayedDeathAnnouncementRequired ? completeDelayedNightDeaths : nightChainDeaths,
+      dayKills: [...dayChainDeaths, ...exileKills, ...knightDuelKills],
+    });
+    navigation.navigate('Night');
+  };
+
+  const sheriffExiledAtResult =
+    typeof exiledPlayer === 'number' && exiledPlayer === localSheriff;
+  const sheriffKilledAtResult =
+    localSheriff !== null &&
+    (dayChainDeaths.includes(localSheriff) ||
+      (delayedDeathAnnouncementRequired && completeDelayedNightDeaths.includes(localSheriff)));
+  const resultBadgePending =
+    (sheriffExiledAtResult || sheriffKilledAtResult) &&
+    !(sheriffExiledAtResult && exileAbilityResolved && exileAbility === 'idiot') &&
+    !exileBadgeResolved;
+  const resultBishopPending =
+    (bishopDiedExile || bishopDiedDayChain || bishopDiedBloodMoon) && !bishopResolved;
+  const resultBloodMoonPending =
+    delayedDeathAnnouncementRequired && (
+      !bloodMoonDeathsAnnounced ||
+      unannouncedBloodMoonSkillDeathRounds.length > 0 ||
+      (bmHunterPlayer !== undefined && !bmHunterResolved) ||
+      (bmWolfKingPlayer !== undefined && !bmWolfKingResolved) ||
+      (bishopDiedBloodMoon && !bishopResolved)
+    );
+  const resultAbilityPending =
+    !exileAbilityResolved && (exileAbility === 'hunter' || exileAbility === 'wolfking');
+  const resultIdiotPending =
+    typeof exiledPlayer === 'number' &&
+    !idiotFlippedPlayers.includes(exiledPlayer) &&
+    !exileAbilityResolved &&
+    (isDualMode
+      ? getActiveDayRole(exiledPlayer) === 'idiot'
+      : (roleMembersMap['idiot'] ?? []).includes(exiledPlayer));
+  const resultFlowComplete =
+    step === 4 &&
+    resultDayDeathsAnnounced &&
+    pendingDayDeathSkill === undefined &&
+    !resultBadgePending &&
+    !resultBishopPending &&
+    !resultBloodMoonPending &&
+    !resultAbilityPending &&
+    !resultIdiotPending;
+  const finishingDayRef = useRef(false);
+
+  useEffect(() => {
+    if (!resultFlowComplete || displayedWinResult || finishingDayRef.current) return;
+    finishingDayRef.current = true;
+    finishDay();
+  }, [resultFlowComplete, displayedWinResult]);
+
   const handleNext = () => {
     if (displayedWinResult) {
       goHome();
@@ -2517,34 +2587,7 @@ export default function DayScreen() {
       setBishopResolved(true);
       return;
     }
-    const isIdiotFlip = exileAbilityResolved && exileAbility === 'idiot';
-    const exileKills: number[] = [];
-    if ((exileAbilityResolved || exileAbility === 'hunter' || exileAbility === 'wolfking') &&
-        exileAbilityTarget !== null &&
-        (exileAbility === 'hunter' || exileAbility === 'wolfking')) {
-      exileKills.push(exileAbilityTarget);
-    }
-    let finalSheriff = localSheriff;
-    const sheriffExiledNow = typeof exiledPlayer === 'number' && exiledPlayer === localSheriff;
-    const sheriffKilledInDayChain = localSheriff !== null && dayChainDeaths.includes(localSheriff);
-    const sheriffKilledInDelayedNight = delayedDeathAnnouncementRequired &&
-      localSheriff !== null && completeDelayedNightDeaths.includes(localSheriff);
-    if ((sheriffKilledInDayChain || sheriffKilledInDelayedNight || (sheriffExiledNow && !isIdiotFlip))) {
-      if (exileBadgeAction === 'tear') finalSheriff = null;
-      else if (exileBadgeAction === 'handover' && exileBadgeRecipient !== null) finalSheriff = exileBadgeRecipient;
-    }
-    setSheriff(finalSheriff);
-    if ((bishopDiedExile || bishopDiedBloodMoon || bishopDiedDayChain) && bishopRevealTarget !== null) {
-      setBishopHolder(bishopRevealTarget);
-    }
-    endDay({
-      exiledPlayer: typeof exiledPlayer === 'number' ? exiledPlayer : undefined,
-      isIdiotFlip,
-      nightChainDeaths: delayedDeathAnnouncementRequired ? completeDelayedNightDeaths : nightChainDeaths,
-      dayKills: [...dayChainDeaths, ...exileKills,
-        ...knightDuelKills],
-    });
-    navigation.navigate('Night');
+    finishDay();
   };
 
   const canAdvance = (): boolean => {

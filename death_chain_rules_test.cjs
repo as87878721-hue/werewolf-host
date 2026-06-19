@@ -49,6 +49,35 @@ expectEqual(
 );
 
 expectEqual(
+  'daytime dreamwalker death carries the protected player',
+  resolveAutomaticDeathRounds(
+    [2],
+    'day',
+    [{ roleId: 'dreamwalker', members: [2], dreamwalkerTarget: 6 }],
+    { dreamwalker: [2] },
+  ),
+  [[2], [6]],
+);
+
+expectEqual(
+  'blood moon hunter killing dreamwalker creates a delayed night chain',
+  resolveAutomaticDeathRounds(
+    [2],
+    'night',
+    [{ roleId: 'dreamwalker', members: [2], dreamwalkerTarget: 6 }],
+    { dreamwalker: [2] },
+    {},
+    [],
+    [],
+    undefined,
+    null,
+    'single',
+    [5],
+  ),
+  [[2], [6]],
+);
+
+expectEqual(
   'duplicate current-night records are not treated as the previous night',
   getPreviousDreamwalkerTarget([
     { nightNumber: 1, actions: [{ roleId: 'dreamwalker', members: [2], dreamwalkerTarget: 3 }], summary: [] },

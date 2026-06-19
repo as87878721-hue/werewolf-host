@@ -132,10 +132,6 @@ export default function DayScreen() {
     return upperIsDead ? playerCardMap[p]?.lower : playerCardMap[p]?.upper;
   };
 
-  const witchPoisonTarget = applyMagicSwapTarget(
-    nightActions.find(a => a.roleId === 'witch')?.poisonTarget,
-    currentMagicSwap,
-  );
   const sheriffDiedLastNight = sheriffPlayer !== null && nightChainDeaths.includes(sheriffPlayer);
   const shouldShowSheriffStep = currentNight === 1 || sheriffDiedLastNight;
 
@@ -373,10 +369,24 @@ export default function DayScreen() {
     ...new Set([...upperDeadPlayers, ...nightChainDeaths]),
   ];
   const dayChainDeaths = [...new Set(dayDeathRounds.flat())];
+  const resolveBloodMoonSkillTarget = (target: number | null) => target === null
+    ? undefined
+    : resolveTimedDeathSkillTarget(
+        target,
+        'night',
+        nightActions,
+        roleMembersMap,
+        playerCardMap,
+        upperDeadPlayers,
+        prevDreamwalkerTarget,
+        gameMode,
+      );
+  const resolvedBmHunterTarget = resolveBloodMoonSkillTarget(bmHunterTarget);
+  const resolvedBmWolfKingTarget = resolveBloodMoonSkillTarget(bmWolfKingTarget);
   const extraDirectDayDeathRounds = [
     ...knightDuelKills,
-    ...(bmHunterResolved && bmHunterTarget !== null ? [bmHunterTarget] : []),
-    ...(bmWolfKingResolved && bmWolfKingTarget !== null ? [bmWolfKingTarget] : []),
+    ...(bmHunterResolved && resolvedBmHunterTarget !== undefined ? [resolvedBmHunterTarget] : []),
+    ...(bmWolfKingResolved && resolvedBmWolfKingTarget !== undefined ? [resolvedBmWolfKingTarget] : []),
   ].map(player => [player]);
   const dayDeathTriggerRounds = [
     ...dayDeathRounds,
@@ -538,20 +548,20 @@ export default function DayScreen() {
     }
   }, [step, exiledPlayer]);
 
-  // 血月延後技能：找出每個死亡玩家的角色（雙身分用 getDeathRole，單身分從 roleMembersMap）
-  const getBmDeathRole = (p: number): string | undefined => {
-    if (isDualMode) return getDeathRole(p);
-    for (const [rid, members] of Object.entries(roleMembersMap)) {
-      if ((members ?? []).includes(p)) return rid;
-    }
-    return undefined;
-  };
-  const bmHunterPlayer = bloodMoonActivated
-    ? delayedNightDeaths.find(p => getBmDeathRole(p) === 'hunter' && p !== witchPoisonTarget)
-    : undefined;
-  const bmWolfKingPlayer = bloodMoonActivated
-    ? delayedNightDeaths.find(p => getBmDeathRole(p) === 'wolf_king' && p !== witchPoisonTarget)
-    : undefined;
+  // 血月延後死亡仍屬夜晚死亡，沿用夜晚的毒殺、木乃伊封印等技能判定。
+  const bloodMoonDeathSkillTriggers = bloodMoonActivated
+    ? getDeathSkillTriggers(
+        delayedNightDeathRounds,
+        'night',
+        nightActions,
+        roleMembersMap,
+        playerCardMap,
+        upperDeadPlayers,
+        gameMode,
+      )
+    : [];
+  const bmHunterPlayer = bloodMoonDeathSkillTriggers.find(trigger => trigger.roleId === 'hunter')?.player;
+  const bmWolfKingPlayer = bloodMoonDeathSkillTriggers.find(trigger => trigger.roleId === 'wolf_king')?.player;
   const bishopDiedBloodMoon = bishopInGame && bloodMoonActivated &&
     currentBishopHolder !== null && delayedNightDeaths.includes(currentBishopHolder) && !bishopResolved;
   const lastWordsRoleForPreview = lastWordsPlayer !== null
@@ -1931,7 +1941,13 @@ export default function DayScreen() {
           )}
           {bmHunterTarget !== null && (
             <View style={styles.skillSelection}>
-              <Text style={styles.skillSelectionText}>已選擇：{bmHunterTarget}號</Text>
+              <Text style={styles.skillSelectionText}>
+                {resolvedBmHunterTarget === undefined
+                  ? '目標受到夜晚規則保護，本次不會死亡'
+                  : resolvedBmHunterTarget === bmHunterTarget
+                  ? `已選擇：${bmHunterTarget}號`
+                  : `已選擇：${bmHunterTarget}號，實際目標：${resolvedBmHunterTarget}號`}
+              </Text>
             </View>
           )}
         </View>
@@ -1960,7 +1976,13 @@ export default function DayScreen() {
           )}
           {bmWolfKingTarget !== null && (
             <View style={styles.skillSelection}>
-              <Text style={styles.skillSelectionText}>已選擇：{bmWolfKingTarget}號</Text>
+              <Text style={styles.skillSelectionText}>
+                {resolvedBmWolfKingTarget === undefined
+                  ? '目標受到夜晚規則保護，本次不會死亡'
+                  : resolvedBmWolfKingTarget === bmWolfKingTarget
+                  ? `已選擇：${bmWolfKingTarget}號`
+                  : `已選擇：${bmWolfKingTarget}號，實際目標：${resolvedBmWolfKingTarget}號`}
+              </Text>
             </View>
           )}
         </View>
@@ -2038,7 +2060,13 @@ export default function DayScreen() {
               {bmHunterPlayer !== undefined && bmHunterResolved && (
                 <View style={[styles.banner, { borderColor: Colors.warning, marginTop: 8 }]}>
                   <Text style={[styles.bannerText, { color: Colors.warning }]}>
-                    🏹 獵人（{bmHunterPlayer} 號）{bmHunterTarget !== null ? `擊殺 ${bmHunterTarget} 號` : '放棄開槍'}
+                    🏹 獵人（{bmHunterPlayer} 號）{
+                      bmHunterTarget === null
+                        ? '放棄開槍'
+                        : resolvedBmHunterTarget === undefined
+                        ? '目標受到夜晚保護，未造成死亡'
+                        : `擊殺 ${resolvedBmHunterTarget} 號`
+                    }
                   </Text>
                 </View>
               )}
@@ -2047,7 +2075,13 @@ export default function DayScreen() {
               {bmWolfKingPlayer !== undefined && bmWolfKingResolved && (
                 <View style={[styles.banner, { borderColor: Colors.warning, marginTop: 8 }]}>
                   <Text style={[styles.bannerText, { color: Colors.warning }]}>
-                    👑 狼王（{bmWolfKingPlayer} 號）{bmWolfKingTarget !== null ? `帶走 ${bmWolfKingTarget} 號` : '放棄帶人'}
+                    👑 狼王（{bmWolfKingPlayer} 號）{
+                      bmWolfKingTarget === null
+                        ? '放棄帶人'
+                        : resolvedBmWolfKingTarget === undefined
+                        ? '目標受到夜晚保護，未造成死亡'
+                        : `帶走 ${resolvedBmWolfKingTarget} 號`
+                    }
                   </Text>
                 </View>
               )}
@@ -2180,6 +2214,10 @@ export default function DayScreen() {
     if (pendingDayDeathSkill) {
       if (dayDeathSkillTarget !== null) {
         appendDayDeathRounds([dayDeathSkillTarget]);
+      }
+      if (pendingDayDeathSkill.player === exiledPlayer) {
+        setExileAbility(pendingDayDeathSkill.roleId === 'hunter' ? 'hunter' : 'wolfking');
+        setExileAbilityResolved(true);
       }
       setHandledDayDeathSkills(previous => [
         ...new Set([...previous, pendingDayDeathSkill.player]),
@@ -2320,8 +2358,8 @@ export default function DayScreen() {
       nightChainDeaths: bloodMoonActivated ? delayedNightDeaths : nightChainDeaths,
       dayKills: [...dayChainDeaths, ...exileKills,
         ...knightDuelKills,
-        ...(bmHunterResolved && bmHunterTarget !== null ? [bmHunterTarget] : []),
-        ...(bmWolfKingResolved && bmWolfKingTarget !== null ? [bmWolfKingTarget] : [])],
+        ...(bmHunterResolved && resolvedBmHunterTarget !== undefined ? [resolvedBmHunterTarget] : []),
+        ...(bmWolfKingResolved && resolvedBmWolfKingTarget !== undefined ? [resolvedBmWolfKingTarget] : [])],
     });
     navigation.navigate('Night');
   };
@@ -2419,12 +2457,16 @@ export default function DayScreen() {
     if (step === 4 && bloodMoonActivated && bmHunterPlayer !== undefined && !bmHunterResolved) {
       return bmHunterTarget === null
         ? '放棄開槍並繼續'
-        : `確認獵殺 ${bmHunterTarget} 號並繼續`;
+        : resolvedBmHunterTarget === undefined
+        ? '確認目標受保護並繼續'
+        : `確認獵殺 ${resolvedBmHunterTarget} 號並繼續`;
     }
     if (step === 4 && bloodMoonActivated && bmWolfKingPlayer !== undefined && !bmWolfKingResolved) {
       return bmWolfKingTarget === null
         ? '放棄帶人並繼續'
-        : `確認帶走 ${bmWolfKingTarget} 號並繼續`;
+        : resolvedBmWolfKingTarget === undefined
+        ? '確認目標受保護並繼續'
+        : `確認帶走 ${resolvedBmWolfKingTarget} 號並繼續`;
     }
     if (step === 4 && !exileAbilityResolved && exileAbility === 'hunter') {
       return exileAbilityTarget === null

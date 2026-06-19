@@ -180,6 +180,28 @@ expectEqual(
 );
 
 expectEqual(
+  'mummy sealed wolf king has no delayed night death skill trigger',
+  getDeathSkillTriggers(
+    [[6]],
+    'night',
+    [{ roleId: 'mummy', members: [1], mummySealedRole: 'wolf_king' }],
+    { mummy: [1], wolf_king: [6] },
+  ),
+  [],
+);
+
+expectEqual(
+  'mummy seal does not block wolf king exiled during the day',
+  getDeathSkillTriggers(
+    [[6]],
+    'day',
+    [{ roleId: 'mummy', members: [1], mummySealedRole: 'wolf_king' }],
+    { mummy: [1], wolf_king: [6] },
+  ),
+  [{ player: 6, roleId: 'wolf_king' }],
+);
+
+expectEqual(
   'tengu first knife can be saved but second knife cannot',
   computeNightDeaths(
     [

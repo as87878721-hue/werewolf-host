@@ -266,6 +266,28 @@ expectEqual(
 );
 
 expectEqual(
+  'poisoned hunter has no death skill trigger',
+  getDeathSkillTriggers(
+    [[5]],
+    'night',
+    [{ roleId: 'witch', members: [4], poisonTarget: 5 }],
+    { hunter: [5] },
+  ),
+  [],
+);
+
+expectEqual(
+  'mummy sealed hunter has no delayed night death skill trigger',
+  getDeathSkillTriggers(
+    [[6]],
+    'night',
+    [{ roleId: 'mummy', members: [1], mummySealedRole: 'hunter' }],
+    { mummy: [1], hunter: [6] },
+  ),
+  [],
+);
+
+expectEqual(
   'mummy sealed wolf king has no delayed night death skill trigger',
   getDeathSkillTriggers(
     [[6]],

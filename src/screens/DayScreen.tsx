@@ -183,6 +183,7 @@ export default function DayScreen() {
       setBmHunterResolved(false);
       setBmWolfKingTarget(null);
       setBmWolfKingResolved(false);
+      setBloodMoonDeathsAnnounced(false);
     }
     if (fromStep >= 3) {
       setDayResolvedWinResult(null);
@@ -305,6 +306,7 @@ export default function DayScreen() {
   const [knightEndsDay, setKnightEndsDay] = useState(false);
 
   // 血月延後技能觸發（step 4）
+  const [bloodMoonDeathsAnnounced, setBloodMoonDeathsAnnounced] = useState(false);
   const [bmHunterTarget, setBmHunterTarget] = useState<number | null>(null);
   const [bmHunterResolved, setBmHunterResolved] = useState(false);
   const [bmWolfKingTarget, setBmWolfKingTarget] = useState<number | null>(null);
@@ -563,7 +565,8 @@ export default function DayScreen() {
   const bloodMoonDeathChainComplete =
     !bloodMoonActivated ||
     step < 4 ||
-    ((bmHunterPlayer === undefined || bmHunterResolved) &&
+    (bloodMoonDeathsAnnounced &&
+     (bmHunterPlayer === undefined || bmHunterResolved) &&
      (bmWolfKingPlayer === undefined || bmWolfKingResolved));
   const dayDeathChainComplete =
     step >= 1 &&
@@ -1870,6 +1873,42 @@ export default function DayScreen() {
     });
     const canSelectBloodMoonTarget = (player: number) => bloodMoonCandidates.includes(player);
 
+    if (bloodMoonActivated && !bloodMoonDeathsAnnounced) {
+      return (
+        <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollPad}>
+          <View style={[styles.banner, noVote ? styles.bannerNeutral : styles.bannerDanger]}>
+            <Text style={styles.bannerText}>
+              {noVote ? '🗳️  流票 — 今天無人被放逐' : `☠️  ${exiledPlayer} 號 被放逐出局`}
+            </Text>
+          </View>
+
+          <View style={[styles.banner, { borderColor: Colors.wolf, marginTop: 8 }]}>
+            <Text style={[styles.bannerText, { color: Colors.wolf }]}>🌑 血月延後資訊 — 現在公布給玩家</Text>
+            {delayedNightDeathRounds.length === 0 && (
+              <Text style={[styles.hint, { marginTop: 4 }]}>昨晚平安夜</Text>
+            )}
+            {bearTamerResult && (
+              <Text style={[styles.hint, { color: Colors.text, marginTop: 4 }]}>
+                🐻 訓熊師真實結果：熊{bearTamerResult === 'growl' ? '叫了' : '沒有叫'}
+              </Text>
+            )}
+            {crowSurroundTarget !== undefined && (
+              <Text style={[styles.hint, { color: Colors.text, marginTop: 4 }]}>
+                🐦‍⬛ 烏鴉環繞：{crowSurroundTarget}號
+              </Text>
+            )}
+          </View>
+
+          {renderDeathRoundDetails(delayedNightDeathRounds, 'blood-moon-delayed')}
+          {delayedNightDeathRounds.length > 0 && (
+            <View style={[styles.banner, { borderColor: Colors.success }]}>
+              <Text style={[styles.bannerText, { color: Colors.success }]}>死亡連鎖已公布，確認後處理死亡角色技能</Text>
+            </View>
+          )}
+        </ScrollView>
+      );
+    }
+
     if (bloodMoonActivated && bmHunterPlayer !== undefined && !bmHunterResolved) {
       return (
         <View style={styles.skillScreen}>
@@ -1991,30 +2030,10 @@ export default function DayScreen() {
           targetNums,
         )}
 
-        {/* 血月延後資訊（放逐結果後公布） */}
+        {/* 血月延後死亡技能處理結果 */}
         {bloodMoonActivated && (() => {
           return (
             <>
-              <View style={[styles.banner, { borderColor: Colors.wolf, marginTop: 8 }]}>
-                <Text style={[styles.bannerText, { color: Colors.wolf }]}>🌑 血月延後資訊 — 現在公布給玩家：</Text>
-                {delayedNightDeaths.length === 0
-                  ? <Text style={styles.hint}>昨晚平安夜</Text>
-                  : delayedNightDeaths.map(p => (
-                      <Text key={p} style={[styles.hint, { color: Colors.text }]}>☠️ {p} 號出局</Text>
-                    ))
-                }
-                {bearTamerResult && (
-                  <Text style={[styles.hint, { color: Colors.text, marginTop: 4 }]}>
-                    🐻 訓熊師真實結果：熊{bearTamerResult === 'growl' ? '叫了' : '沒有叫'}
-                  </Text>
-                )}
-                {crowSurroundTarget !== undefined && (
-                  <Text style={[styles.hint, { color: Colors.text, marginTop: 4 }]}>
-                    🐦‍⬛ 烏鴉環繞：{crowSurroundTarget}號
-                  </Text>
-                )}
-              </View>
-
               {/* 血月延後技能：獵人 */}
               {bmHunterPlayer !== undefined && bmHunterResolved && (
                 <View style={[styles.banner, { borderColor: Colors.warning, marginTop: 8 }]}>
@@ -2262,6 +2281,10 @@ export default function DayScreen() {
     }
 
     // Step 4 → end day
+    if (bloodMoonActivated && !bloodMoonDeathsAnnounced) {
+      setBloodMoonDeathsAnnounced(true);
+      return;
+    }
     if (bloodMoonActivated && bmHunterPlayer !== undefined && !bmHunterResolved) {
       setBmHunterResolved(true);
       return;
@@ -2328,6 +2351,7 @@ export default function DayScreen() {
       const sheriffKilledInDayChain = localSheriff !== null && dayChainDeaths.includes(localSheriff);
       const sheriffKilledInDelayedNight = bloodMoonActivated &&
         localSheriff !== null && delayedNightDeaths.includes(localSheriff);
+      if (bloodMoonActivated && !bloodMoonDeathsAnnounced) return true;
       if (bloodMoonActivated && bmHunterPlayer !== undefined && !bmHunterResolved) return true;
       if (bloodMoonActivated && bmWolfKingPlayer !== undefined && !bmWolfKingResolved) return true;
       if (!exileAbilityResolved && (exileAbility === 'hunter' || exileAbility === 'wolfking')) {
@@ -2386,6 +2410,11 @@ export default function DayScreen() {
       return resolvedTarget === undefined
         ? `確認目標受保護並繼續`
         : `確認${action} ${resolvedTarget}號並公布連鎖死訊`;
+    }
+    if (step === 4 && bloodMoonActivated && !bloodMoonDeathsAnnounced) {
+      return delayedNightDeathRounds.length === 0
+        ? '確認平安夜，繼續'
+        : '確認連鎖死訊，處理死亡技能';
     }
     if (step === 4 && bloodMoonActivated && bmHunterPlayer !== undefined && !bmHunterResolved) {
       return bmHunterTarget === null

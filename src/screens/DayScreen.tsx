@@ -372,6 +372,8 @@ export default function DayScreen() {
   const dayChainDeaths = [...new Set(dayDeathRounds.flat())];
   const hasResultDayDeathChain =
     step === 4 && dayChainDeaths.some(player => player !== exiledPlayer);
+  const needsResultDayDeathAnnouncement =
+    step === 4 && (hasResultDayDeathChain || bloodMoonActivated);
   const resolveBloodMoonSkillTarget = (target: number | null) => target === null
     ? undefined
     : resolveTimedDeathSkillTarget(
@@ -587,7 +589,7 @@ export default function DayScreen() {
     pendingDayDeathSkill === undefined &&
     pendingSelfDestruct === null &&
     whiteWolfBringChainComplete &&
-    (!hasResultDayDeathChain || resultDayDeathsAnnounced) &&
+    (!needsResultDayDeathAnnouncement || resultDayDeathsAnnounced) &&
     bloodMoonDeathChainComplete &&
     !(step === 2 && knightDuelActive);
   const computeCurrentDayWinResult = (extraDeaths: number[] = []) => {
@@ -1887,7 +1889,7 @@ export default function DayScreen() {
     });
     const canSelectBloodMoonTarget = (player: number) => bloodMoonCandidates.includes(player);
 
-    if (hasResultDayDeathChain && !resultDayDeathsAnnounced) {
+    if (needsResultDayDeathAnnouncement && !resultDayDeathsAnnounced) {
       return (
         <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollPad}>
           <View style={[styles.banner, noVote ? styles.bannerNeutral : styles.bannerDanger]}>
@@ -1896,9 +1898,14 @@ export default function DayScreen() {
             </Text>
           </View>
           <View style={[styles.banner, { borderColor: Colors.warning, marginTop: 8 }]}>
-            <Text style={[styles.bannerText, { color: Colors.warning }]}>☀️ 白天死亡連鎖</Text>
+            <Text style={[styles.bannerText, { color: Colors.warning }]}>☀️ 票逐死訊與白天死亡連鎖</Text>
           </View>
           {renderDeathRoundDetails(dayDeathRounds, 'result-day-chain')}
+          {dayDeathRounds.length === 0 && (
+            <View style={[styles.banner, styles.bannerNeutral]}>
+              <Text style={styles.bannerText}>本次票逐沒有產生死亡</Text>
+            </View>
+          )}
           <View style={[styles.banner, { borderColor: Colors.success, marginTop: 8 }]}>
             <Text style={[styles.bannerText, { color: Colors.success }]}>死亡連鎖已完成，確認後繼續處理後續資訊</Text>
           </View>
@@ -1909,12 +1916,6 @@ export default function DayScreen() {
     if (bloodMoonActivated && !bloodMoonDeathsAnnounced) {
       return (
         <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollPad}>
-          <View style={[styles.banner, noVote ? styles.bannerNeutral : styles.bannerDanger]}>
-            <Text style={styles.bannerText}>
-              {noVote ? '🗳️  流票 — 今天無人被放逐' : `☠️  ${exiledPlayer} 號 被放逐出局`}
-            </Text>
-          </View>
-
           <View style={[styles.banner, { borderColor: Colors.wolf, marginTop: 8 }]}>
             <Text style={[styles.bannerText, { color: Colors.wolf }]}>🌑 血月延後資訊 — 現在公布給玩家</Text>
             {delayedNightDeathRounds.length === 0 && (
@@ -2153,7 +2154,7 @@ export default function DayScreen() {
             </Text>
           </View>
         )}
-          {!hasResultDayDeathChain && renderDeathRoundDetails(dayDeathRounds, 'day-chain')}
+          {!needsResultDayDeathAnnouncement && renderDeathRoundDetails(dayDeathRounds, 'day-chain')}
 
         {/* 主教：放逐時觸發查驗傳承 */}
         {bishopInGame && bishopDiedExile && renderBishopUI()}
@@ -2345,7 +2346,7 @@ export default function DayScreen() {
     }
 
     // Step 4 → end day
-    if (hasResultDayDeathChain && !resultDayDeathsAnnounced) {
+    if (needsResultDayDeathAnnouncement && !resultDayDeathsAnnounced) {
       setResultDayDeathsAnnounced(true);
       return;
     }
@@ -2419,7 +2420,7 @@ export default function DayScreen() {
       const sheriffKilledInDayChain = localSheriff !== null && dayChainDeaths.includes(localSheriff);
       const sheriffKilledInDelayedNight = bloodMoonActivated &&
         localSheriff !== null && delayedNightDeaths.includes(localSheriff);
-      if (hasResultDayDeathChain && !resultDayDeathsAnnounced) return true;
+      if (needsResultDayDeathAnnouncement && !resultDayDeathsAnnounced) return true;
       if (bloodMoonActivated && !bloodMoonDeathsAnnounced) return true;
       if (bloodMoonActivated && bmHunterPlayer !== undefined && !bmHunterResolved) return true;
       if (bloodMoonActivated && bmWolfKingPlayer !== undefined && !bmWolfKingResolved) return true;
@@ -2480,8 +2481,8 @@ export default function DayScreen() {
         ? `確認目標受保護並繼續`
         : `確認${action} ${resolvedTarget}號並公布連鎖死訊`;
     }
-    if (step === 4 && hasResultDayDeathChain && !resultDayDeathsAnnounced) {
-      return '確認白天連鎖死訊，繼續';
+    if (step === 4 && needsResultDayDeathAnnouncement && !resultDayDeathsAnnounced) {
+      return '確認票逐與白天連鎖死訊，繼續';
     }
     if (step === 4 && bloodMoonActivated && !bloodMoonDeathsAnnounced) {
       return delayedNightDeathRounds.length === 0

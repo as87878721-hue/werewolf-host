@@ -422,7 +422,7 @@ export default function DayScreen() {
     upperDeadPlayers,
     nightChainDeaths,
   );
-  // 血月延後結算時，先排除白天已死亡者，再重新建立夜晚死亡連鎖。
+  // 血月延後結算時，先排除白天已死亡者，再重新建立夜晚死訊。
   // 這可避免已在白天死亡的原始目標仍觸發殉情、夢遊者等夜晚連鎖。
   const delayedNightDeathRounds = delayedDeathAnnouncementRequired
     ? resolveAutomaticDeathRounds(
@@ -1006,9 +1006,6 @@ export default function DayScreen() {
           );
       return (
         <View style={styles.skillScreen}>
-          <View style={[styles.banner, styles.bannerDanger]}>
-            <Text style={styles.bannerText}>死亡連鎖</Text>
-          </View>
           <View style={styles.skillHeader}>
             <Text style={styles.skillTitle}>
               {isHunter ? '🏹 獵人開槍' : '👑 狼王帶人'}
@@ -1244,12 +1241,9 @@ export default function DayScreen() {
         {showVoteHeader && (
           <View style={[styles.banner, { borderColor: Colors.warning, marginBottom: 8 }]}>
             <Text style={[styles.bannerText, { color: Colors.warning }]}>🗳️ 票逐資訊</Text>
-            <Text style={styles.hint}>處理票逐死亡角色技能與白天死亡連鎖</Text>
+            <Text style={styles.hint}>處理票逐死訊與死亡角色技能</Text>
           </View>
         )}
-        <View style={[styles.banner, styles.bannerDanger]}>
-          <Text style={styles.bannerText}>死亡連鎖</Text>
-        </View>
         <View style={styles.skillHeader}>
           <Text style={styles.skillTitle}>{isHunter ? '🏹 獵人開槍' : '👑 狼王帶人'}</Text>
           <Text style={styles.skillActor}>{pendingDayDeathSkill.player}號</Text>
@@ -1376,7 +1370,7 @@ export default function DayScreen() {
       return (
         <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollPad}>
           <View style={[styles.banner, styles.bannerDanger]}>
-            <Text style={styles.bannerText}>白天死亡連鎖</Text>
+            <Text style={styles.bannerText}>白天死訊</Text>
           </View>
           {renderDeathRoundDetails(dayDeathRounds, 'speech-death-notice')}
           {noticeSheriffDeathPlayer !== null && renderBadgeUI(
@@ -1970,6 +1964,96 @@ export default function DayScreen() {
         {detail !== '' && <Text style={[styles.hint, { color: Colors.text, marginTop: 4 }]}>{detail}</Text>}
       </View>
     );
+    const renderBloodMoonInfo = () => (
+      <>
+        {renderBloodMoonHeader('')}
+        {completeDelayedNightDeathRounds.length === 0 && (
+          <Text style={[styles.hint, { textAlign: 'center' }]}>昨晚平安夜</Text>
+        )}
+        {bearTamerResult && (
+          <Text style={[styles.hint, { color: Colors.text, textAlign: 'center' }]}>
+            🐻 訓熊師真實結果：熊{bearTamerResult === 'growl' ? '叫了' : '沒有叫'}
+          </Text>
+        )}
+        {crowSurroundTarget !== undefined && (
+          <Text style={[styles.hint, { color: Colors.text, textAlign: 'center' }]}>
+            🐦‍⬛ 烏鴉環繞：{crowSurroundTarget}號
+          </Text>
+        )}
+        {renderDeathRoundDetails(completeDelayedNightDeathRounds, 'blood-moon-complete')}
+        {blockedBloodMoonHunters.map(({ player, status }) => (
+          <View key={`blocked-blood-moon-hunter-${player}`} style={[styles.banner, { borderColor: Colors.textMuted }]}>
+            <Text style={styles.hint}>
+              🏹 {player}號獵人因{status === 'poisoned' ? '巫毒死亡' : '被木乃伊封印'}，無法開槍
+            </Text>
+          </View>
+        ))}
+      </>
+    );
+    const renderBloodMoonHunterSkill = () => (
+      <>
+        <View style={styles.skillHeader}>
+          <Text style={styles.skillTitle}>🏹 獵人開槍</Text>
+          <Text style={styles.skillActor}>{bmHunterPlayer}號獵人</Text>
+        </View>
+        <Text style={styles.hint}>選擇目標；不選目標即放棄開槍</Text>
+        {renderGrid(
+          playerNums,
+          n => canSelectBloodMoonTarget(n)
+            ? defaultGridStyle(n, n === bmHunterTarget)
+            : disabledGridStyle,
+          n => n === bmHunterTarget ? '💀' : undefined,
+          n => {
+            if (!canSelectBloodMoonTarget(n)) return;
+            setBmHunterTarget(p => p === n ? null : n);
+          },
+          { isDisabled: n => !canSelectBloodMoonTarget(n) },
+        )}
+        {bmHunterTarget !== null && (
+          <View style={styles.skillSelection}>
+            <Text style={styles.skillSelectionText}>
+              {resolvedBmHunterTarget === undefined
+                ? '目標受到夜晚規則保護，本次不會死亡'
+                : resolvedBmHunterTarget === bmHunterTarget
+                ? `已選擇：${bmHunterTarget}號`
+                : `已選擇：${bmHunterTarget}號，實際目標：${resolvedBmHunterTarget}號`}
+            </Text>
+          </View>
+        )}
+      </>
+    );
+    const renderBloodMoonWolfKingSkill = () => (
+      <>
+        <View style={styles.skillHeader}>
+          <Text style={styles.skillTitle}>👑 狼王帶人</Text>
+          <Text style={styles.skillActor}>{bmWolfKingPlayer}號狼王</Text>
+        </View>
+        <Text style={styles.hint}>選擇目標；不選目標即放棄帶人</Text>
+        {renderGrid(
+          playerNums,
+          n => canSelectBloodMoonTarget(n)
+            ? defaultGridStyle(n, n === bmWolfKingTarget)
+            : disabledGridStyle,
+          n => n === bmWolfKingTarget ? '💀' : undefined,
+          n => {
+            if (!canSelectBloodMoonTarget(n)) return;
+            setBmWolfKingTarget(p => p === n ? null : n);
+          },
+          { isDisabled: n => !canSelectBloodMoonTarget(n) },
+        )}
+        {bmWolfKingTarget !== null && (
+          <View style={styles.skillSelection}>
+            <Text style={styles.skillSelectionText}>
+              {resolvedBmWolfKingTarget === undefined
+                ? '目標受到夜晚規則保護，本次不會死亡'
+                : resolvedBmWolfKingTarget === bmWolfKingTarget
+                ? `已選擇：${bmWolfKingTarget}號`
+                : `已選擇：${bmWolfKingTarget}號，實際目標：${resolvedBmWolfKingTarget}號`}
+            </Text>
+          </View>
+        )}
+      </>
+    );
 
     if (pendingDayDeathSkill) return renderDayDeathSkill(true);
 
@@ -2034,37 +2118,12 @@ export default function DayScreen() {
     if (delayedDeathAnnouncementRequired && !bloodMoonDeathsAnnounced) {
       return (
         <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollPad}>
-          <View style={[styles.banner, { borderColor: Colors.wolf, marginTop: 8 }]}>
-            <Text style={[styles.bannerText, { color: Colors.wolf }]}>🌑 血月延後資訊</Text>
-            {delayedNightDeathRounds.length === 0 && (
-              <Text style={[styles.hint, { marginTop: 4 }]}>昨晚平安夜</Text>
-            )}
-            {bearTamerResult && (
-              <Text style={[styles.hint, { color: Colors.text, marginTop: 4 }]}>
-                🐻 訓熊師真實結果：熊{bearTamerResult === 'growl' ? '叫了' : '沒有叫'}
-              </Text>
-            )}
-            {crowSurroundTarget !== undefined && (
-              <Text style={[styles.hint, { color: Colors.text, marginTop: 4 }]}>
-                🐦‍⬛ 烏鴉環繞：{crowSurroundTarget}號
-              </Text>
-            )}
-          </View>
-
-          {renderDeathRoundDetails(delayedNightDeathRounds, 'blood-moon-delayed')}
-          {blockedBloodMoonHunters.map(({ player, status }) => (
-            <View key={`blocked-blood-moon-hunter-${player}`} style={[styles.banner, { borderColor: Colors.textMuted }]}>
-              <Text style={styles.bannerText}>死亡連鎖</Text>
-              <Text style={[styles.hint, { marginTop: 4 }]}>
-                🏹 {player}號獵人因{status === 'poisoned' ? '巫毒死亡' : '被木乃伊封印'}，無法開槍
-              </Text>
-            </View>
-          ))}
-          {delayedNightDeathRounds.length > 0 && (
-            <View style={[styles.banner, { borderColor: Colors.textMuted }]}>
-              <Text style={styles.hint}>初始死訊已公布，確認後繼續處理死亡角色技能</Text>
-            </View>
-          )}
+          {renderBloodMoonInfo()}
+          {bmHunterPlayer !== undefined && !bmHunterResolved
+            ? renderBloodMoonHunterSkill()
+            : bmWolfKingPlayer !== undefined && !bmWolfKingResolved
+            ? renderBloodMoonWolfKingSkill()
+            : null}
         </ScrollView>
       );
     }
@@ -2072,10 +2131,9 @@ export default function DayScreen() {
     if (unannouncedBloodMoonSkillDeathRounds.length > 0) {
       return (
         <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollPad}>
-          {renderBloodMoonHeader('公布死亡技能新增的夜晚連鎖死訊')}
-          {renderDeathRoundDetails(unannouncedBloodMoonSkillDeathRounds, 'blood-moon-skill-chain')}
+          {renderBloodMoonInfo()}
           <View style={[styles.banner, { borderColor: Colors.textMuted }]}>
-            <Text style={styles.hint}>本輪新增死訊已公布，確認後繼續處理死亡技能</Text>
+            <Text style={styles.hint}>新增死訊已公布，確認後繼續處理死亡角色技能</Text>
           </View>
         </ScrollView>
       );
@@ -2084,38 +2142,8 @@ export default function DayScreen() {
     if (delayedDeathAnnouncementRequired && bmHunterPlayer !== undefined && !bmHunterResolved) {
       return (
         <ScrollView style={styles.scroll} contentContainerStyle={[styles.scrollPad, { flexGrow: 1 }]}>
-          {renderBloodMoonHeader('處理延後死亡角色技能')}
-          <View style={[styles.banner, styles.bannerDanger]}>
-            <Text style={styles.bannerText}>死亡連鎖</Text>
-          </View>
-          <View style={styles.skillHeader}>
-            <Text style={styles.skillTitle}>🏹 獵人開槍</Text>
-            <Text style={styles.skillActor}>{bmHunterPlayer}號獵人</Text>
-          </View>
-          <Text style={styles.hint}>選擇目標；不選目標即放棄開槍</Text>
-          {renderGrid(
-            playerNums,
-            n => canSelectBloodMoonTarget(n)
-              ? defaultGridStyle(n, n === bmHunterTarget)
-              : disabledGridStyle,
-            n => n === bmHunterTarget ? '💀' : undefined,
-            n => {
-              if (!canSelectBloodMoonTarget(n)) return;
-              setBmHunterTarget(p => p === n ? null : n);
-            },
-            { isDisabled: n => !canSelectBloodMoonTarget(n) },
-          )}
-          {bmHunterTarget !== null && (
-            <View style={styles.skillSelection}>
-              <Text style={styles.skillSelectionText}>
-                {resolvedBmHunterTarget === undefined
-                  ? '目標受到夜晚規則保護，本次不會死亡'
-                  : resolvedBmHunterTarget === bmHunterTarget
-                  ? `已選擇：${bmHunterTarget}號`
-                  : `已選擇：${bmHunterTarget}號，實際目標：${resolvedBmHunterTarget}號`}
-              </Text>
-            </View>
-          )}
+          {renderBloodMoonInfo()}
+          {renderBloodMoonHunterSkill()}
         </ScrollView>
       );
     }
@@ -2123,38 +2151,8 @@ export default function DayScreen() {
     if (delayedDeathAnnouncementRequired && bmWolfKingPlayer !== undefined && !bmWolfKingResolved) {
       return (
         <ScrollView style={styles.scroll} contentContainerStyle={[styles.scrollPad, { flexGrow: 1 }]}>
-          {renderBloodMoonHeader('處理延後死亡角色技能')}
-          <View style={[styles.banner, styles.bannerDanger]}>
-            <Text style={styles.bannerText}>死亡連鎖</Text>
-          </View>
-          <View style={styles.skillHeader}>
-            <Text style={styles.skillTitle}>👑 狼王帶人</Text>
-            <Text style={styles.skillActor}>{bmWolfKingPlayer}號狼王</Text>
-          </View>
-          <Text style={styles.hint}>選擇目標；不選目標即放棄帶人</Text>
-          {renderGrid(
-            playerNums,
-            n => canSelectBloodMoonTarget(n)
-              ? defaultGridStyle(n, n === bmWolfKingTarget)
-              : disabledGridStyle,
-            n => n === bmWolfKingTarget ? '💀' : undefined,
-            n => {
-              if (!canSelectBloodMoonTarget(n)) return;
-              setBmWolfKingTarget(p => p === n ? null : n);
-            },
-            { isDisabled: n => !canSelectBloodMoonTarget(n) },
-          )}
-          {bmWolfKingTarget !== null && (
-            <View style={styles.skillSelection}>
-              <Text style={styles.skillSelectionText}>
-                {resolvedBmWolfKingTarget === undefined
-                  ? '目標受到夜晚規則保護，本次不會死亡'
-                  : resolvedBmWolfKingTarget === bmWolfKingTarget
-                  ? `已選擇：${bmWolfKingTarget}號`
-                  : `已選擇：${bmWolfKingTarget}號，實際目標：${resolvedBmWolfKingTarget}號`}
-              </Text>
-            </View>
-          )}
+          {renderBloodMoonInfo()}
+          {renderBloodMoonWolfKingSkill()}
         </ScrollView>
       );
     }
@@ -2162,7 +2160,7 @@ export default function DayScreen() {
     if (delayedDeathAnnouncementRequired && bishopDiedBloodMoon) {
       return (
         <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollPad}>
-          {renderBloodMoonHeader('處理延後死亡角色技能')}
+          {renderBloodMoonInfo()}
           {renderBishopUI()}
         </ScrollView>
       );
@@ -2171,9 +2169,6 @@ export default function DayScreen() {
     if (!exileAbilityResolved && (exileAbility === 'hunter' || exileAbility === 'wolfking')) {
       return (
         <View style={styles.skillScreen}>
-          <View style={[styles.banner, styles.bannerDanger]}>
-            <Text style={styles.bannerText}>死亡連鎖</Text>
-          </View>
           <View style={styles.skillHeader}>
             <Text style={styles.skillTitle}>
               {exileAbility === 'hunter' ? '🏹 放逐後獵人開槍' : '👑 放逐後狼王帶人'}
@@ -2498,6 +2493,11 @@ export default function DayScreen() {
     }
     if (delayedDeathAnnouncementRequired && !bloodMoonDeathsAnnounced) {
       setBloodMoonDeathsAnnounced(true);
+      if (bmHunterPlayer !== undefined && !bmHunterResolved) {
+        setBmHunterResolved(true);
+      } else if (bmWolfKingPlayer !== undefined && !bmWolfKingResolved) {
+        setBmWolfKingResolved(true);
+      }
       return;
     }
     if (unannouncedBloodMoonSkillDeathRounds.length > 0) {
@@ -2647,12 +2647,26 @@ export default function DayScreen() {
       return bishopRevealTarget === null ? '請選擇主教傳承目標' : '確認主教傳承，繼續';
     }
     if (step === 4 && delayedDeathAnnouncementRequired && !bloodMoonDeathsAnnounced) {
+      if (bmHunterPlayer !== undefined && !bmHunterResolved) {
+        return bmHunterTarget === null
+          ? '放棄開槍並繼續'
+          : resolvedBmHunterTarget === undefined
+          ? '確認目標受保護並繼續'
+          : `確認獵殺 ${resolvedBmHunterTarget} 號並繼續`;
+      }
+      if (bmWolfKingPlayer !== undefined && !bmWolfKingResolved) {
+        return bmWolfKingTarget === null
+          ? '放棄帶人並繼續'
+          : resolvedBmWolfKingTarget === undefined
+          ? '確認目標受保護並繼續'
+          : `確認帶走 ${resolvedBmWolfKingTarget} 號並繼續`;
+      }
       return delayedNightDeathRounds.length === 0
         ? '確認平安夜，繼續'
-        : '確認連鎖死訊，處理死亡技能';
+        : '確認死訊，繼續';
     }
     if (step === 4 && unannouncedBloodMoonSkillDeathRounds.length > 0) {
-      return '確認夜晚技能連鎖死訊，繼續';
+      return '確認新增死訊，繼續';
     }
     if (step === 4 && delayedDeathAnnouncementRequired && bmHunterPlayer !== undefined && !bmHunterResolved) {
       return bmHunterTarget === null

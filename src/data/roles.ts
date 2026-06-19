@@ -154,7 +154,7 @@ export const ROLES: RoleDefinition[] = [
     hasNightAction: true,
     actionPrompt: '白狼王請睜眼確認身分。白狼王只能在白天自爆帶人，夜晚不可自爆。',
     actionType: 'none',
-    description: '白天可自爆並帶走一名玩家；帶走造成的死亡會繼續結算死亡連鎖',
+    description: '白天可自爆並帶走一名玩家；帶走造成的死亡會繼續結算後續死訊',
     team: 'wolf',
   },
   {

@@ -103,6 +103,15 @@ export interface GameLogEntry {
   text: string;
 }
 
+export type DeathCauseMap = Record<number, string>;
+
+export interface DeathRecord {
+  night: number;
+  timing: 'night' | 'day';
+  player: number;
+  cause: string;
+}
+
 export interface GameConfigSnapshot {
   name: string;
   mode: GameMode;
@@ -439,6 +448,7 @@ interface GameState {
   sheriffExplosionRule: SheriffExplosionRule;
   winResult: WinResult | null;
   gameLog: GameLogEntry[];
+  deathRecords: DeathRecord[];
   nightStepSnapshots: Record<number, GameUndoSnapshot>;
   dayStepSnapshots: Record<number, GameUndoSnapshot>;
   dayCommitSnapshot: PhaseTransitionSnapshot | null;
@@ -489,6 +499,7 @@ interface GameState {
     isIdiotFlip?: boolean;
     nightChainDeaths?: number[];
     dayKills?: number[];
+    deathCauses?: DeathCauseMap;
   }) => void;
   transformThief: (players: number[], roleId: string) => void;
 }
@@ -530,6 +541,7 @@ interface GameUndoSnapshot {
   goldenBabyPlayers: number[];
   winResult: WinResult | null;
   gameLog: GameLogEntry[];
+  deathRecords: DeathRecord[];
 }
 
 interface PhaseTransitionSnapshot {
@@ -588,6 +600,7 @@ function createGameUndoSnapshot(state: GameState): GameUndoSnapshot {
     goldenBabyPlayers: [...state.goldenBabyPlayers],
     winResult: state.winResult ? { ...state.winResult } : null,
     gameLog: state.gameLog.map(log => ({ ...log })),
+    deathRecords: state.deathRecords.map(record => ({ ...record })),
   };
 }
 
@@ -637,6 +650,7 @@ function restoreGameUndoSnapshot(snapshot: GameUndoSnapshot) {
     goldenBabyPlayers: [...snapshot.goldenBabyPlayers],
     winResult: snapshot.winResult ? { ...snapshot.winResult } : null,
     gameLog: snapshot.gameLog.map(log => ({ ...log })),
+    deathRecords: snapshot.deathRecords.map(record => ({ ...record })),
   };
 }
 
@@ -732,6 +746,7 @@ export const useGameStore = create<GameState>((set, get) => ({
   sheriffExplosionRule: DEFAULT_SINGLE_CONFIG.sheriffExplosionRule ?? 'none',
   winResult: null,
   gameLog: [],
+  deathRecords: [],
   nightStepSnapshots: {},
   dayStepSnapshots: {},
   dayCommitSnapshot: null,
@@ -775,6 +790,8 @@ export const useGameStore = create<GameState>((set, get) => ({
     sheriffPlayer: null,
     sheriffExplosionCount: 0,
     sheriffBadgeDestroyed: false,
+    gameLog: [],
+    deathRecords: [],
     lastDayExiledRoleId: null,
     slaveTraderSlaves: [],
     fireWolfBurnedPlayers: [],
@@ -1417,6 +1434,7 @@ export const useGameStore = create<GameState>((set, get) => ({
     goldenBabyPlayers: [],
     winResult: null,
     gameLog: [],
+    deathRecords: [],
   }),
 
   startNewGame: (mode) => {
@@ -1471,6 +1489,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       singleWinRule: baseConfig.singleWinRule,
       winResult: null,
       gameLog: [],
+      deathRecords: [],
       configName: baseConfig.name,
     });
   },
@@ -1485,7 +1504,7 @@ export const useGameStore = create<GameState>((set, get) => ({
   setMonkVoteTarget: (player) => set({ monkVoteTarget: player }),
   setMonkVoteCard: (card) => set({ monkVoteCard: card }),
 
-  endDay: ({ exiledPlayer, isIdiotFlip = false, nightChainDeaths, dayKills = [] }) => {
+  endDay: ({ exiledPlayer, isIdiotFlip = false, nightChainDeaths, dayKills = [], deathCauses = {} }) => {
     const dayCommitSnapshot = createPhaseTransitionSnapshot(get());
     const {
       nightActions, deadPlayers, upperDeadPlayers, gameMode,
@@ -1531,8 +1550,23 @@ export const useGameStore = create<GameState>((set, get) => ({
       : `${exiledPlayer}號被放逐`;
     get().appendLog(
       '白天結算',
-      `${exileText}；新增死亡：${uniqueNewDeaths.length > 0 ? uniqueNewDeaths.map(p => `${p}號`).join('、') : '無'}`,
+      `${exileText}；新增死亡：${uniqueNewDeaths.length > 0
+        ? uniqueNewDeaths.map(player => `${player}號（${deathCauses[player] ?? '技能造成死亡'}）`).join('、')
+        : '無'}`,
     );
+    const nightDeathSet = new Set(nightDeaths);
+    const newDeathRecords: DeathRecord[] = uniqueNewDeaths.map(player => ({
+      night: currentNight,
+      timing: nightDeathSet.has(player) ? 'night' : 'day',
+      player,
+      cause: deathCauses[player] ?? '技能造成死亡',
+    }));
+    newDeathRecords.forEach(record => {
+      get().appendLog(
+        record.timing === 'night' ? '夜晚死亡' : '白天死亡',
+        `${record.player}號死亡（死因：${record.cause}）`,
+      );
+    });
 
     // Idiot flip: no longer loses voting rights; track separately
     const newLostVote = lostVotePlayers;
@@ -1607,6 +1641,7 @@ export const useGameStore = create<GameState>((set, get) => ({
         lastDayExileInfo: exileInfo,
         lastDayExiledRoleId,
         winResult,
+        deathRecords: [...state.deathRecords, ...newDeathRecords],
       }));
     } else {
       const allDead = [...new Set([...deadPlayers, ...allNewDeaths])];
@@ -1636,6 +1671,7 @@ export const useGameStore = create<GameState>((set, get) => ({
         lastDayExileInfo: exileInfo,
         lastDayExiledRoleId,
         winResult,
+        deathRecords: [...state.deathRecords, ...newDeathRecords],
       }));
     }
   },
@@ -2139,6 +2175,186 @@ export function resolveAutomaticDeathRounds(
   }
 
   return rounds;
+}
+
+function appendDeathCause(causes: DeathCauseMap, player: number | undefined, cause: string) {
+  if (player === undefined) return;
+  const previous = causes[player];
+  if (!previous) causes[player] = cause;
+  else if (!previous.split('、').includes(cause)) causes[player] = `${previous}、${cause}`;
+}
+
+export function buildDeathCauseMap(
+  rounds: number[][],
+  firstRoundCauses: DeathCauseMap,
+  actions: NightAction[] = [],
+  roleMembersMap: Record<string, number[]> = {},
+  playerCardMap: Record<number, { upper?: string; lower?: string }> = {},
+  upperDeadPlayers: number[] = [],
+  cupidLovers?: [number, number] | null,
+  gameMode: GameMode = 'single',
+  fireWolfBurnRecords: FireWolfBurnRecord[] = [],
+): DeathCauseMap {
+  const causes: DeathCauseMap = { ...firstRoundCauses };
+  const dreamwalkerTarget = getEffectiveDreamwalkerTarget(actions);
+
+  rounds.forEach((round, roundIndex) => {
+    if (roundIndex === 0) {
+      round.forEach(player => {
+        if (!causes[player]) causes[player] = '技能造成死亡';
+      });
+      return;
+    }
+    const previousRound = rounds[roundIndex - 1] ?? [];
+    for (const player of round) {
+      const dreamwalkerDied = dreamwalkerTarget === player && previousRound.some(previousPlayer =>
+        getActiveRoleAtPhaseStart(
+          previousPlayer,
+          gameMode,
+          roleMembersMap,
+          playerCardMap,
+          upperDeadPlayers,
+          fireWolfBurnRecords,
+        ) === 'dreamwalker'
+      );
+      if (dreamwalkerDied) appendDeathCause(causes, player, '攝夢人連帶死亡');
+
+      if (cupidLovers && gameMode !== 'dual') {
+        const [first, second] = cupidLovers;
+        const linkedDeath = (player === first && previousRound.includes(second)) ||
+          (player === second && previousRound.includes(first));
+        if (linkedDeath) appendDeathCause(causes, player, '戀人殉情');
+      }
+      if (!causes[player]) causes[player] = '死亡連鎖';
+    }
+  });
+  return causes;
+}
+
+export function getNightDeathCauseMap(
+  rounds: number[][],
+  actions: NightAction[],
+  roleMembersMap: Record<string, number[]> = {},
+  playerCardMap: Record<number, { upper?: string; lower?: string }> = {},
+  upperDeadPlayers: number[] = [],
+  cupidLovers?: [number, number] | null,
+  gameMode: GameMode = 'single',
+  slaveTraderSlaves: number[] = [],
+  fireWolfBurnRecords: FireWolfBurnRecord[] = [],
+  prevDreamwalkerTarget?: number,
+): DeathCauseMap {
+  const firstRound = rounds[0] ?? [];
+  const causes: DeathCauseMap = {};
+  const magicSwap = getMagicSwap(actions);
+  const addTarget = (target: number | undefined, cause: string) => {
+    const effectiveTarget = applyMagicSwapTarget(target, magicSwap);
+    if (effectiveTarget !== undefined && firstRound.includes(effectiveTarget)) {
+      appendDeathCause(causes, effectiveTarget, cause);
+    }
+  };
+
+  for (const action of actions) {
+    if ((action.roleId === 'werewolf' || action.roleId === 'wolf_king')) addTarget(action.killTarget, '狼刀');
+    if (action.roleId === 'witch') addTarget(action.poisonTarget, '女巫毒藥');
+    if (action.roleId === 'spirit_wolf') {
+      addTarget(action.spiritWolfKillTarget, '靈狼刀');
+      addTarget(action.spiritWolfPoisonTarget, '靈狼毒藥');
+    }
+    if (action.roleId === 'shaman' && action.shamanMode === 'knife') addTarget(action.shamanTarget, '薩滿刀');
+    if (action.roleId === 'tengu') action.tenguKillTargets?.forEach(target => addTarget(target, '天狗刀'));
+    if (action.roleId === 'fire_wolf') addTarget(action.fireWolfKillTarget, '火狼刀');
+    if (action.roleId === 'gargoyle') addTarget(action.gargoyleTarget, '石像鬼偷襲');
+    if (action.roleId === 'anubis') action.anubisTargets?.forEach(target => addTarget(target, '阿努比斯天秤'));
+    if (action.roleId === 'sharpshooter' && action.sharpshooterDeclared) addTarget(action.sharpshooterTarget, '神射手擊殺');
+    if (action.roleId === 'blind_swordsman') {
+      if (action.blindSwordsmanTarget !== undefined) addTarget(action.blindSwordsmanTarget, '盲人武士擊殺');
+      action.members.forEach(player => {
+        if (firstRound.includes(player)) appendDeathCause(causes, player, '盲人武士自殺');
+      });
+    }
+    if (action.roleId === 'witch_hunter' && action.witchHunterTarget !== undefined) {
+      const effectiveTarget = applyMagicSwapTarget(action.witchHunterTarget, magicSwap);
+      if (effectiveTarget !== undefined && firstRound.includes(effectiveTarget)) {
+        appendDeathCause(causes, effectiveTarget, '獵魔人狩獵');
+      }
+      action.members.forEach(player => {
+        if (firstRound.includes(player)) appendDeathCause(causes, player, '獵魔人反噬');
+      });
+    }
+  }
+
+  const effectiveWolfKill = applyMagicSwapTarget(
+    actions.find(action => action.roleId === 'werewolf' || action.roleId === 'wolf_king')?.killTarget,
+    magicSwap,
+  );
+  const effectiveGuardTarget = applyMagicSwapTarget(
+    actions.find(action => action.roleId === 'guard')?.protectTarget,
+    magicSwap,
+  );
+  const effectiveWitchSave = applyMagicSwapTarget(
+    actions.find(action => action.roleId === 'witch')?.saveTarget,
+    magicSwap,
+  );
+  if (
+    effectiveWolfKill !== undefined &&
+    effectiveWolfKill === effectiveGuardTarget &&
+    effectiveWolfKill === effectiveWitchSave &&
+    firstRound.includes(effectiveWolfKill)
+  ) {
+    appendDeathCause(causes, effectiveWolfKill, '守衛與解藥同時使用');
+  }
+
+  const dreamwalkerTarget = getEffectiveDreamwalkerTarget(actions);
+  if (
+    dreamwalkerTarget !== undefined &&
+    dreamwalkerTarget === prevDreamwalkerTarget &&
+    firstRound.includes(dreamwalkerTarget)
+  ) {
+    appendDeathCause(causes, dreamwalkerTarget, '連續攝夢');
+  }
+
+  const slaveTrader = roleMembersMap['slave_trader']?.find(player =>
+    getActiveRoleAtPhaseStart(
+      player,
+      gameMode,
+      roleMembersMap,
+      playerCardMap,
+      upperDeadPlayers,
+      fireWolfBurnRecords,
+    ) === 'slave_trader'
+  );
+  if (slaveTrader !== undefined && !firstRound.includes(slaveTrader) && slaveTraderSlaves.length > 0) {
+    const deathsBeforeSubstitution = computeNightDeaths(
+      actions,
+      roleMembersMap,
+      playerCardMap,
+      upperDeadPlayers,
+      prevDreamwalkerTarget,
+      cupidLovers,
+      gameMode,
+      false,
+      [],
+      fireWolfBurnRecords,
+    );
+    if (deathsBeforeSubstitution.includes(slaveTrader)) {
+      const substitute = slaveTraderSlaves.find(player =>
+        player !== slaveTrader && !deathsBeforeSubstitution.includes(player)
+      );
+      if (substitute !== undefined && firstRound.includes(substitute)) causes[substitute] = '奴隸替死';
+    }
+  }
+
+  return buildDeathCauseMap(
+    rounds,
+    causes,
+    actions,
+    roleMembersMap,
+    playerCardMap,
+    upperDeadPlayers,
+    cupidLovers,
+    gameMode,
+    fireWolfBurnRecords,
+  );
 }
 
 export function getDeathSkillTriggers(
@@ -2839,7 +3055,21 @@ export function buildNightSummary(
   );
   const bloodMoonOn = actions.some(a => a.roleId === 'blood_moon' && a.bloodMoonActivated);
   const summaryDeaths = bloodMoonOn ? [] : allDeaths;
+  const summaryDeathCauses = getNightDeathCauseMap(
+    summaryDeaths.length > 0 ? [summaryDeaths] : [],
+    actions,
+    roleMembersMap,
+    playerCardMap,
+    upperDeadPlayers,
+    cupidLovers,
+    gameMode ?? 'single',
+    [],
+    fireWolfBurnRecords,
+    prevDreamwalkerTarget,
+  );
 
-  lines.push(summaryDeaths.length === 0 ? '✨ 本晚平安，無人死亡' : `💀 本晚死亡：${summaryDeaths.map(fmt).join('、')}`);
+  lines.push(summaryDeaths.length === 0
+    ? '✨ 本晚平安，無人死亡'
+    : `💀 本晚死亡：${summaryDeaths.map(player => `${fmt(player)}（死因：${summaryDeathCauses[player]}）`).join('、')}`);
   return lines;
 }

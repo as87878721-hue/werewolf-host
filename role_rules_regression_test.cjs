@@ -23,6 +23,9 @@ const {
   buildNightSummary,
   getFireWolfEffectiveRole,
   shouldShowSheriffStepForState,
+  resolveAutomaticDeathRounds,
+  buildDeathCauseMap,
+  getNightDeathCauseMap,
 } = require('./src/store/gameStore.ts');
 
 const same = (actual, expected, label) => {
@@ -530,6 +533,71 @@ assert.strictEqual(
   useGameStore.getState().sheriffBadgeDestroyed,
   false,
   'going back from a sheriff explosion must restore the badge state',
+);
+
+const sheriffExplosionFilteredNightRounds = resolveAutomaticDeathRounds(
+  [5],
+  'night',
+  [{ roleId: 'werewolf', members: [1], killTarget: 5 }],
+  { werewolf: [1] },
+  {},
+  [],
+  [],
+  undefined,
+  null,
+  'single',
+  [5],
+);
+assert.deepStrictEqual(
+  sheriffExplosionFilteredNightRounds,
+  [],
+  'a player who self-destructed during the sheriff election must be removed from the morning night deaths',
+);
+
+const nightCauseRounds = [[5]];
+assert.deepStrictEqual(
+  getNightDeathCauseMap(
+    nightCauseRounds,
+    [{ roleId: 'werewolf', members: [1], killTarget: 5 }],
+    { werewolf: [1] },
+  ),
+  { 5: '狼刀' },
+  'night death records must identify the lethal night action',
+);
+
+assert.deepStrictEqual(
+  buildDeathCauseMap(
+    [[2], [6]],
+    { 2: '投票放逐' },
+    [],
+    {},
+    {},
+    [],
+    [2, 6],
+    'single',
+  ),
+  { 2: '投票放逐', 6: '戀人殉情' },
+  'automatic death rounds must identify linked-death causes',
+);
+
+useGameStore.getState().startNewGame('single');
+useGameStore.setState({
+  nightActions: [{ roleId: 'werewolf', members: [1], killTarget: 5 }],
+  roleMembersMap: { werewolf: [1] },
+});
+useGameStore.getState().endDay({
+  nightChainDeaths: [5],
+  deathCauses: { 5: '狼刀' },
+});
+assert.deepStrictEqual(
+  useGameStore.getState().deathRecords,
+  [{ night: 1, timing: 'night', player: 5, cause: '狼刀' }],
+  'committed deaths must retain timing and cause',
+);
+assert.strictEqual(
+  useGameStore.getState().gameLog.some(entry => entry.text.includes('5號死亡（死因：狼刀）')),
+  true,
+  'death logs must include the cause',
 );
 
 console.log('role rule regression tests passed');

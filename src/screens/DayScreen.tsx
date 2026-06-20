@@ -22,6 +22,9 @@ import {
   computeWinResult,
   projectDeathState,
   shouldShowSheriffStepForState,
+  buildDeathCauseMap,
+  getNightDeathCauseMap,
+  DeathCauseMap,
   WinResult,
 } from '../store/gameStore';
 import PlayerButton, { RoleInfo } from '../components/PlayerButton';
@@ -45,7 +48,7 @@ export default function DayScreen() {
     sheriffPlayer, lostVotePlayers, idiotFlippedPlayers,
     cupidLovers, bishopHolder, knightUsed, goldenBabyPlayers, monkVoteTarget, slaveTraderSlaves,
     fireWolfBurnedPlayers, fireWolfBurnedCards, fireWolfBurnRecords,
-    setSheriff, setSheriffExplosionState, endDay, setBishopHolder, setKnightUsed, setRoleMembers, setPlayerCardRole, rewindNightStep, resetGameProgress,
+    setSheriff, setSheriffExplosionState, endDay, appendLog, setBishopHolder, setKnightUsed, setRoleMembers, setPlayerCardRole, rewindNightStep, resetGameProgress,
     setMonkVoteTarget, setMonkVoteCard, captureDayStepSnapshot, restoreDayStepSnapshot,
   } = useGameStore();
 
@@ -107,6 +110,19 @@ export default function DayScreen() {
   // 血月發動時，真實夜晚死亡延後到放逐結果後才套用。
   const initialNightDeathRounds = bloodMoonActivated ? [] : resolvedNightDeathRounds;
   const [nightDeathRounds, setNightDeathRounds] = useState<number[][]>(initialNightDeathRounds);
+  const initialNightDeathCauses = getNightDeathCauseMap(
+    initialNightDeathRounds,
+    nightActions,
+    roleMembersMap,
+    playerCardMap,
+    upperDeadPlayers,
+    cupidLovers,
+    gameMode,
+    slaveTraderSlaves,
+    fireWolfBurnRecords,
+    prevDreamwalkerTarget,
+  );
+  const [nightDeathCauses, setNightDeathCauses] = useState<DeathCauseMap>(initialNightDeathCauses);
   const [handledNightDeathSkills, setHandledNightDeathSkills] = useState<number[]>([]);
   const [nightDeathSkillTarget, setNightDeathSkillTarget] = useState<number | null>(null);
   const [nightDeathSkillBlocked, setNightDeathSkillBlocked] = useState<number | null>(null);
@@ -141,9 +157,11 @@ export default function DayScreen() {
 
   // 雙身分白天有效身分：上牌已死（含昨晚剛死）→ 下牌；否則 → 上牌
   const getActiveDayRole = (p: number): string | undefined => {
+    const nightDeathsHaveBeenAnnounced =
+      sheriffExplosionPlayer === null || sheriffExplosionChainAnnounced;
     const upperIsDead =
       upperDeadPlayers.includes(p) ||
-      (nightChainComplete && nightChainDeaths.includes(p));
+      (nightDeathsHaveBeenAnnounced && nightChainComplete && nightChainDeaths.includes(p));
     return getActiveRoleAtPhaseStart(
       p,
       gameMode,
@@ -197,6 +215,7 @@ export default function DayScreen() {
       setBadgeRecipient(null);
       setSheriffExplosionMode(false);
       setSheriffExplosionPlayer(null);
+      setSheriffExplosionChainAnnounced(false);
       setLocalSheriff(() => {
         if (!sheriffPlayer) return null;
         if (nightChainDeaths.includes(sheriffPlayer) || deadPlayers.includes(sheriffPlayer)) return null;
@@ -226,6 +245,7 @@ export default function DayScreen() {
       setMonkVoteTarget(null);
       setMonkVoteCard(null);
       setDayDeathRounds([]);
+      setDayDeathCauses({});
       setVoteDeathRoundStart(0);
       setHandledDayDeathSkills([]);
       setDayDeathSkillTarget(null);
@@ -242,6 +262,7 @@ export default function DayScreen() {
       setWwBringTarget(null);
       setWwBringResolved(false);
       setDayDeathRounds([]);
+      setDayDeathCauses({});
       setVoteDeathRoundStart(0);
       setHandledDayDeathSkills([]);
       setDayDeathSkillTarget(null);
@@ -261,6 +282,7 @@ export default function DayScreen() {
     if (fromStep >= 1) {
       setDayResolvedWinResult(null);
       setNightDeathRounds(initialNightDeathRounds);
+      setNightDeathCauses(initialNightDeathCauses);
       setHandledNightDeathSkills([]);
       setNightDeathSkillTarget(null);
       setNightDeathSkillBlocked(null);
@@ -270,6 +292,11 @@ export default function DayScreen() {
       setBishopTriggerStep(null);
       setBishopRevealTarget(null);
       setBishopResolved(false);
+      if (sheriffExplosionPlayer !== null) {
+        setSheriffExplosionChainAnnounced(false);
+        setLastWordsPlayer(sheriffExplosionPlayer);
+        setSpeechDeathNotice('self_destruct');
+      }
     }
   };
 
@@ -285,6 +312,7 @@ export default function DayScreen() {
   const [badgeRecipient, setBadgeRecipient] = useState<number | null>(null);
   const [sheriffExplosionMode, setSheriffExplosionMode] = useState(false);
   const [sheriffExplosionPlayer, setSheriffExplosionPlayer] = useState<number | null>(null);
+  const [sheriffExplosionChainAnnounced, setSheriffExplosionChainAnnounced] = useState(false);
 
   // Step 1: 夜晚摘要展開狀態
   const [showNightSummary, setShowNightSummary] = useState(false);
@@ -306,6 +334,7 @@ export default function DayScreen() {
   const [wwBringTarget, setWwBringTarget] = useState<number | null>(null);
   const [wwBringResolved, setWwBringResolved] = useState(false);
   const [dayDeathRounds, setDayDeathRounds] = useState<number[][]>([]);
+  const [dayDeathCauses, setDayDeathCauses] = useState<DeathCauseMap>({});
   const [voteDeathRoundStart, setVoteDeathRoundStart] = useState(0);
   const [handledDayDeathSkills, setHandledDayDeathSkills] = useState<number[]>([]);
   const [dayDeathSkillTarget, setDayDeathSkillTarget] = useState<number | null>(null);
@@ -430,8 +459,11 @@ export default function DayScreen() {
     }
   };
 
+  const sheriffExplosionChainPending =
+    sheriffExplosionPlayer !== null && !sheriffExplosionChainAnnounced;
+  const announcedNightChainDeaths = sheriffExplosionChainPending ? [] : nightChainDeaths;
   const dayPhaseUpperDeadPlayers = [
-    ...new Set([...upperDeadPlayers, ...nightChainDeaths]),
+    ...new Set([...upperDeadPlayers, ...announcedNightChainDeaths]),
   ];
   const dayChainDeaths = [...new Set(dayDeathRounds.flat())];
   const voteDeathRounds = dayDeathRounds.slice(voteDeathRoundStart);
@@ -482,7 +514,7 @@ export default function DayScreen() {
     roleMembersMap,
     playerCardMap,
     upperDeadPlayers,
-    nightChainDeaths,
+    announcedNightChainDeaths,
     gameMode,
     fireWolfBurnRecords,
   );
@@ -546,10 +578,53 @@ export default function DayScreen() {
     ...delayedNightDeathRounds,
     ...bloodMoonSkillDeathRounds,
   ];
+  const delayedNightDeathCauses = getNightDeathCauseMap(
+    delayedNightDeathRounds,
+    nightActions,
+    roleMembersMap,
+    playerCardMap,
+    upperDeadPlayers,
+    cupidLovers,
+    gameMode,
+    slaveTraderSlaves,
+    fireWolfBurnRecords,
+    prevDreamwalkerTarget,
+  );
+  const bmHunterDeathCauses = buildDeathCauseMap(
+    bmHunterDeathRounds,
+    Object.fromEntries((bmHunterDeathRounds[0] ?? []).map(player => [player, '獵人開槍'])),
+    nightActions,
+    roleMembersMap,
+    playerCardMap,
+    upperDeadPlayers,
+    cupidLovers,
+    gameMode,
+    fireWolfBurnRecords,
+  );
+  const bmWolfKingDeathCauses = buildDeathCauseMap(
+    bmWolfKingDeathRounds,
+    Object.fromEntries((bmWolfKingDeathRounds[0] ?? []).map(player => [player, '狼王帶走'])),
+    nightActions,
+    roleMembersMap,
+    playerCardMap,
+    upperDeadPlayers,
+    cupidLovers,
+    gameMode,
+    fireWolfBurnRecords,
+  );
+  const completeDelayedNightDeathCauses: DeathCauseMap = {
+    ...delayedNightDeathCauses,
+    ...bmHunterDeathCauses,
+    ...bmWolfKingDeathCauses,
+  };
+  const allResolvedDeathCauses: DeathCauseMap = {
+    ...(delayedDeathAnnouncementRequired ? completeDelayedNightDeathCauses : nightDeathCauses),
+    ...dayDeathCauses,
+  };
   const completeDelayedNightDeaths = [...new Set(completeDelayedNightDeathRounds.flat())];
   const settledNightDeaths = delayedDeathAnnouncementRequired && step >= 4
     ? completeDelayedNightDeaths
-    : nightChainDeaths;
+    : announcedNightChainDeaths;
   const dreamwalkerCarryDeaths = resolvedDayDeaths.filter(p => !directDayDeaths.includes(p));
   const previewDeaths = [
     ...settledNightDeaths,
@@ -585,7 +660,7 @@ export default function DayScreen() {
   const aliveNums = playerNums.filter(p => {
     if (deadPlayers.includes(p)) return false;
     if (resolvedDayDeaths.includes(p)) return false;
-    if (nightChainDeaths.includes(p)) {
+    if (announcedNightChainDeaths.includes(p)) {
       if (isDualMode && !upperDeadPlayers.includes(p)) return true;
       return false;
     }
@@ -603,7 +678,7 @@ export default function DayScreen() {
     return active !== undefined && wolfTeamIds.has(active);
   };
 
-  const appendDayDeathRounds = (initialDeaths: number[]) => {
+  const appendDayDeathRounds = (initialDeaths: number[], cause: string) => {
     setDayDeathRounds(previous => {
       const existingDeaths = previous.flat();
       const addedRounds = resolveAutomaticDeathRounds(
@@ -620,8 +695,71 @@ export default function DayScreen() {
         existingDeaths,
         fireWolfBurnRecords,
       );
+      if (addedRounds.length > 0) {
+        const firstRoundCauses = Object.fromEntries(
+          addedRounds[0].map(player => [player, cause]),
+        );
+        const addedCauses = buildDeathCauseMap(
+          addedRounds,
+          firstRoundCauses,
+          nightActions,
+          roleMembersMap,
+          playerCardMap,
+          dayPhaseUpperDeadPlayers,
+          cupidLovers,
+          gameMode,
+          fireWolfBurnRecords,
+        );
+        setDayDeathCauses(current => ({ ...current, ...addedCauses }));
+      }
       return addedRounds.length > 0 ? [...previous, ...addedRounds] : previous;
     });
+  };
+
+  const finalizeSheriffExplosionChain = () => {
+    const filteredNightRounds = resolveAutomaticDeathRounds(
+      directNightDeaths,
+      'night',
+      nightActions,
+      roleMembersMap,
+      playerCardMap,
+      upperDeadPlayers,
+      deadPlayers,
+      prevDreamwalkerTarget,
+      cupidLovers,
+      gameMode,
+      dayChainDeaths,
+      fireWolfBurnRecords,
+    );
+    const filteredNightCauses = getNightDeathCauseMap(
+      filteredNightRounds,
+      nightActions,
+      roleMembersMap,
+      playerCardMap,
+      upperDeadPlayers,
+      cupidLovers,
+      gameMode,
+      slaveTraderSlaves,
+      fireWolfBurnRecords,
+      prevDreamwalkerTarget,
+    );
+    setNightDeathRounds(filteredNightRounds);
+    setNightDeathCauses(filteredNightCauses);
+    dayDeathRounds.forEach((round, index) => {
+      appendLog(
+        index === 0 ? '警上自爆死訊' : '警上自爆連鎖',
+        round.map(player => `${player}號死亡（死因：${dayDeathCauses[player] ?? '死亡連鎖'}）`).join('、'),
+      );
+    });
+    appendLog(
+      '昨晚死訊',
+      filteredNightRounds.length === 0
+        ? '平安夜'
+        : filteredNightRounds.flat().map(player =>
+            `${player}號死亡（死因：${filteredNightCauses[player] ?? '夜晚技能'}）`
+          ).join('、'),
+    );
+    setSheriffExplosionChainAnnounced(true);
   };
 
   // Bishop: detect current holder's death
@@ -810,7 +948,11 @@ export default function DayScreen() {
     return upperIsDead ? 'lower' : 'upper';
   };
 
-  const handleWolfSelfDestructEnd = (finalSheriff: number | null, extraDayKills: number[] = []) => {
+  const handleWolfSelfDestructEnd = (
+    finalSheriff: number | null,
+    extraDayKills: number[] = [],
+    extraDeathCauses: DeathCauseMap = {},
+  ) => {
     if (stopIfDayWin(extraDayKills)) return;
     if (delayedDeathAnnouncementRequired) {
       setLocalSheriff(finalSheriff);
@@ -825,6 +967,7 @@ export default function DayScreen() {
       isIdiotFlip: false,
       nightChainDeaths: delayedDeathAnnouncementRequired ? completeDelayedNightDeaths : nightChainDeaths,
       dayKills: [...dayChainDeaths, ...extraDayKills, ...knightDuelKills],
+      deathCauses: { ...allResolvedDeathCauses, ...extraDeathCauses },
     });
     navigation.navigate('Night');
   };
@@ -980,7 +1123,11 @@ export default function DayScreen() {
       ? sheriffPlayer
       : null;
   const deathRoundTitle = (index: number) => index === 0 ? '第一輪死訊' : `連鎖死訊 ${index}`;
-  const renderDeathRoundNotices = (rounds: number[][], keyPrefix: string) => (
+  const renderDeathRoundNotices = (
+    rounds: number[][],
+    keyPrefix: string,
+    causes: DeathCauseMap,
+  ) => (
     <>
       {rounds.map((round, index) => (
         <View
@@ -988,7 +1135,7 @@ export default function DayScreen() {
           style={[styles.banner, { borderColor: index === 0 ? Colors.danger : Colors.warning }]}
         >
           <Text style={[styles.bannerText, { color: index === 0 ? Colors.danger : Colors.warning }]}>
-            {deathRoundTitle(index)}：{round.map(player => `${player}號`).join('、')}
+            {deathRoundTitle(index)}：{round.map(player => `${player}號（死因：${causes[player] ?? '技能造成死亡'}）`).join('、')}
           </Text>
         </View>
       ))}
@@ -1101,6 +1248,9 @@ export default function DayScreen() {
     player !== pendingNightDeathSkill?.player;
 
   const renderDeaths = () => {
+    if (sheriffExplosionPlayer !== null && !sheriffExplosionChainAnnounced) {
+      return renderSpeech();
+    }
     if (pendingNightDeathSkill) {
       const isHunter = pendingNightDeathSkill.roleId === 'hunter';
       const resolvedTarget = nightDeathSkillTarget === null
@@ -1130,7 +1280,7 @@ export default function DayScreen() {
               ? '選擇獵人開槍目標，再按下方按鈕完成'
               : '選擇狼王帶走的玩家，再按下方按鈕完成'}
           </Text>
-          {renderDeathRoundNotices(nightDeathRounds, 'pending-night-round')}
+          {renderDeathRoundNotices(nightDeathRounds, 'pending-night-round', nightDeathCauses)}
           {renderGrid(
             playerNums,
             n => canSelectNightDeathSkillTarget(n)
@@ -1234,7 +1384,9 @@ export default function DayScreen() {
         nightDeathRounds.map((round, roundIndex) => (
           <View key={`round-${roundIndex}`} style={[styles.banner, { borderColor: roundIndex === 0 ? Colors.danger : Colors.warning }]}>
             <Text style={[styles.bannerText, { color: roundIndex === 0 ? Colors.danger : Colors.warning }]}>
-              {roundIndex === 0 ? '第一輪死訊' : `連鎖死訊 ${roundIndex}`}：{round.map(player => `${player}號`).join('、')}
+              {roundIndex === 0 ? '第一輪死訊' : `連鎖死訊 ${roundIndex}`}：{round.map(player =>
+                `${player}號（死因：${nightDeathCauses[player] ?? '技能造成死亡'}）`
+              ).join('、')}
             </Text>
             {round.map(p => {
               const { upper, lower } = isDualMode ? getDualRoles(p) : {};
@@ -1344,7 +1496,7 @@ export default function DayScreen() {
           <Text style={styles.skillActor}>{pendingDayDeathSkill.player}號</Text>
         </View>
         <Text style={styles.hint}>本次死亡屬於白天，選擇目標後繼續結算連鎖</Text>
-        {renderDeathRoundNotices(showVoteHeader ? voteDeathRounds : dayDeathRounds, 'pending-day-round')}
+        {renderDeathRoundNotices(showVoteHeader ? voteDeathRounds : dayDeathRounds, 'pending-day-round', dayDeathCauses)}
         {renderGrid(
           playerNums,
           n => canSelectDayDeathSkillTarget(n)
@@ -1366,7 +1518,11 @@ export default function DayScreen() {
     );
   };
 
-  const renderDeathRoundDetails = (rounds: number[][], keyPrefix: string) => (
+  const renderDeathRoundDetails = (
+    rounds: number[][],
+    keyPrefix: string,
+    causes: DeathCauseMap = dayDeathCauses,
+  ) => (
     <>
       {rounds.map((round, roundIndex) => (
         <View
@@ -1374,7 +1530,7 @@ export default function DayScreen() {
           style={[styles.banner, { borderColor: roundIndex === 0 ? Colors.danger : Colors.warning }]}
         >
           <Text style={[styles.bannerText, { color: roundIndex === 0 ? Colors.danger : Colors.warning }]}>
-            {roundIndex === 0 ? '第一輪死訊' : `連鎖死訊 ${roundIndex}`}：{round.map(player => `${player}號`).join('、')}
+            {roundIndex === 0 ? '第一輪死訊' : `連鎖死訊 ${roundIndex}`}：{round.map(player => `${player}號（死因：${causes[player] ?? '技能造成死亡'}）`).join('、')}
           </Text>
           {round.map(p => {
             const previousDayDeaths = rounds.slice(0, roundIndex).flat();
@@ -1443,7 +1599,11 @@ export default function DayScreen() {
   );
 
   const renderSpeech = () => {
-    if (pendingDayDeathSkill) return renderDayDeathSkill();
+    const announcingSheriffExplosion =
+      sheriffExplosionPlayer !== null && !sheriffExplosionChainAnnounced;
+    if (pendingDayDeathSkill && !(announcingSheriffExplosion && speechDeathNotice !== null)) {
+      return renderDayDeathSkill();
+    }
 
     if (speechDeathNotice !== null) {
       const noticeSheriffDeathPlayer =
@@ -1516,6 +1676,7 @@ export default function DayScreen() {
                   isIdiotFlip: false,
                   nightChainDeaths,
                   dayKills: dayChainDeaths,
+                  deathCauses: allResolvedDeathCauses,
                 });
                 navigation.navigate('Night');
                 return;
@@ -1578,6 +1739,8 @@ export default function DayScreen() {
 
     // Sub-phase: last words
     if (lastWordsPlayer !== null) {
+      const isSheriffExplosionFlow =
+        sheriffExplosionPlayer === lastWordsPlayer && !sheriffExplosionChainAnnounced;
       const lwRole = getActiveDayRole(lastWordsPlayer);
       const lwIsHunter = lwRole === 'hunter';
       const lwIsWhiteWolf = isDualMode
@@ -1680,7 +1843,7 @@ export default function DayScreen() {
                   <TouchableOpacity
                     style={[styles.confirmBtn, { flex: 2 }]}
                     onPress={() => {
-                      appendDayDeathRounds([wwBringTarget]);
+                      appendDayDeathRounds([wwBringTarget], '白狼王帶走');
                       setWwBringResolved(true);
                     }}
                   >
@@ -1737,7 +1900,7 @@ export default function DayScreen() {
                   ? speechAbilityTarget
                   : null;
               if (confirmedHunterTarget !== null) {
-                appendDayDeathRounds([confirmedHunterTarget]);
+                appendDayDeathRounds([confirmedHunterTarget], '獵人開槍');
                 setSpeechAbilityResolved(true);
               }
               if ((bishopLastWords || bishopDiedDayChain) && bishopRevealTarget !== null) {
@@ -1748,10 +1911,21 @@ export default function DayScreen() {
                 if (speechBadgeAction === 'tear') finalSheriff = null;
                 else if (speechBadgeAction === 'handover' && speechBadgeRecipient !== null) finalSheriff = speechBadgeRecipient;
               }
-              if (lwEndsDay) {
+              if (isSheriffExplosionFlow) {
+                if (speechSheriffDeathPlayer !== null) setLocalSheriff(finalSheriff);
+                setLastWordsPlayer(null);
+                setSpeechAbility('none');
+                setSpeechAbilityTarget(null);
+                setSpeechAbilityResolved(false);
+                setSpeechBadgeAction(null);
+                setSpeechBadgeRecipient(null);
+                setSpeechBadgeResolved(false);
+                finalizeSheriffExplosionChain();
+              } else if (lwEndsDay) {
                 handleWolfSelfDestructEnd(
                   finalSheriff,
                   confirmedHunterTarget !== null ? [confirmedHunterTarget] : [],
+                  confirmedHunterTarget !== null ? { [confirmedHunterTarget]: '獵人開槍' } : {},
                 );
               } else {
                 if (speechSheriffDeathPlayer !== null) setLocalSheriff(finalSheriff);
@@ -1768,6 +1942,8 @@ export default function DayScreen() {
             <Text style={styles.nextBtnText}>
               {speechAbility === 'hunter' && !speechAbilityResolved && speechAbilityTarget !== null
                 ? `確認獵殺 ${speechAbilityTarget} 號並繼續`
+                : isSheriffExplosionFlow
+                ? '結束遺言，公布昨晚死訊'
                 : lwEndsDay ? '進入夜晚 →' : '結束遺言，繼續'}
             </Text>
           </TouchableOpacity>
@@ -1803,7 +1979,7 @@ export default function DayScreen() {
               style={[styles.confirmBtn, { flex: 1 }]}
               onPress={() => {
                 setSpeechDeaths(prev => [...prev, pendingSelfDestruct]);
-                appendDayDeathRounds([pendingSelfDestruct]);
+                appendDayDeathRounds([pendingSelfDestruct], '自爆');
                 setLastWordsPlayer(pendingSelfDestruct);
                 setSpeechDeathNotice('self_destruct');
                 setPendingSelfDestruct(null);
@@ -2064,7 +2240,11 @@ export default function DayScreen() {
             🐦‍⬛ 烏鴉環繞：{crowSurroundTarget}號
           </Text>
         )}
-        {renderDeathRoundDetails(completeDelayedNightDeathRounds, 'blood-moon-complete')}
+        {renderDeathRoundDetails(
+          completeDelayedNightDeathRounds,
+          'blood-moon-complete',
+          completeDelayedNightDeathCauses,
+        )}
         {blockedBloodMoonHunters.map(({ player, status }) => (
           <View key={`blocked-blood-moon-hunter-${player}`} style={[styles.banner, { borderColor: Colors.textMuted }]}>
             <Text style={styles.hint}>
@@ -2465,6 +2645,7 @@ export default function DayScreen() {
       isIdiotFlip,
       nightChainDeaths: delayedDeathAnnouncementRequired ? completeDelayedNightDeaths : nightChainDeaths,
       dayKills: [...dayChainDeaths, ...exileKills, ...knightDuelKills],
+      deathCauses: allResolvedDeathCauses,
     });
     navigation.navigate('Night');
   };
@@ -2521,7 +2702,10 @@ export default function DayScreen() {
 
     if (pendingDayDeathSkill) {
       if (dayDeathSkillTarget !== null) {
-        appendDayDeathRounds([dayDeathSkillTarget]);
+        appendDayDeathRounds(
+          [dayDeathSkillTarget],
+          pendingDayDeathSkill.roleId === 'hunter' ? '獵人開槍' : '狼王帶走',
+        );
       }
       if (pendingDayDeathSkill.player === exiledPlayer) {
         setExileAbility(pendingDayDeathSkill.roleId === 'hunter' ? 'hunter' : 'wolfking');
@@ -2549,7 +2733,7 @@ export default function DayScreen() {
         setLocalSheriff(null);
         setSheriffExplosionState(nextExplosionCount, badgeDestroyed);
         setSpeechDeaths(previous => [...new Set([...previous, sheriffExplosionPlayer])]);
-        appendDayDeathRounds([sheriffExplosionPlayer]);
+        appendDayDeathRounds([sheriffExplosionPlayer], '警上自爆');
         setLastWordsPlayer(sheriffExplosionPlayer);
         setSpeechDeathNotice('self_destruct');
       } else if (pendingSecondSheriffElection) {
@@ -2594,6 +2778,19 @@ export default function DayScreen() {
           );
           if (addedRounds.length > 0) {
             setNightDeathRounds(previous => [...previous, ...addedRounds]);
+            const directCause = pendingNightDeathSkill.roleId === 'hunter' ? '獵人開槍' : '狼王帶走';
+            const addedCauses = buildDeathCauseMap(
+              addedRounds,
+              Object.fromEntries(addedRounds[0].map(player => [player, directCause])),
+              nightActions,
+              roleMembersMap,
+              playerCardMap,
+              upperDeadPlayers,
+              cupidLovers,
+              gameMode,
+              fireWolfBurnRecords,
+            );
+            setNightDeathCauses(current => ({ ...current, ...addedCauses }));
           }
         }
         setHandledNightDeathSkills(previous => [
@@ -2613,6 +2810,10 @@ export default function DayScreen() {
       if (bishopDiedNight && bishopRevealTarget !== null) {
         setBishopHolder(bishopRevealTarget);
       }
+      if (sheriffExplosionPlayer !== null && sheriffExplosionChainAnnounced) {
+        handleWolfSelfDestructEnd(newSheriff);
+        return;
+      }
       setStep(2);
       return;
     }
@@ -2626,7 +2827,7 @@ export default function DayScreen() {
         setKnightDuelResolved(true);
         setKnightUsed(true);
         setKnightDuelActive(false);
-        appendDayDeathRounds(kills);
+        appendDayDeathRounds(kills, targetIsWolf ? '騎士決鬥' : '騎士決鬥失敗');
         setSpeechDeathNotice(targetIsWolf ? 'knight_wolf' : 'knight_good');
         return;
       }
@@ -2637,7 +2838,7 @@ export default function DayScreen() {
     if (step === 3) {
       if (typeof exiledPlayer === 'number') {
         const activeRole = getActiveDayRole(exiledPlayer);
-        if (activeRole !== 'idiot') appendDayDeathRounds([exiledPlayer]);
+        if (activeRole !== 'idiot') appendDayDeathRounds([exiledPlayer], '投票放逐');
       }
       setStep(4);
       return;

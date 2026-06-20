@@ -22,6 +22,7 @@ const {
   useGameStore,
   buildNightSummary,
   getFireWolfEffectiveRole,
+  shouldShowSheriffStepForState,
 } = require('./src/store/gameStore.ts');
 
 const same = (actual, expected, label) => {
@@ -492,6 +493,43 @@ assert.strictEqual(
   newRoleSummary.some(line => line.endsWith('無行動')),
   false,
   'implemented night skills must not fall through to the no-action summary',
+);
+
+assert.strictEqual(
+  shouldShowSheriffStepForState(1, false, null, 'none', 0, false),
+  true,
+  'the first day must show the sheriff election',
+);
+assert.strictEqual(
+  shouldShowSheriffStepForState(2, false, null, 'double', 1, false),
+  true,
+  'the first explosion in double-explosion mode must reopen the election next day',
+);
+assert.strictEqual(
+  shouldShowSheriffStepForState(2, false, null, 'double', 2, true),
+  false,
+  'the second explosion must swallow the badge and stop future elections',
+);
+assert.strictEqual(
+  shouldShowSheriffStepForState(2, false, 3, 'double', 1, false),
+  false,
+  'electing a sheriff on the second election must stop another automatic election',
+);
+
+useGameStore.getState().startNewGame('dual');
+useGameStore.getState().setSheriffExplosionRule('double');
+useGameStore.getState().captureDayStepSnapshot(0);
+useGameStore.getState().setSheriffExplosionState(1, false);
+useGameStore.getState().restoreDayStepSnapshot(0);
+assert.strictEqual(
+  useGameStore.getState().sheriffExplosionCount,
+  0,
+  'going back from a sheriff explosion must restore the previous explosion count',
+);
+assert.strictEqual(
+  useGameStore.getState().sheriffBadgeDestroyed,
+  false,
+  'going back from a sheriff explosion must restore the badge state',
 );
 
 console.log('role rule regression tests passed');

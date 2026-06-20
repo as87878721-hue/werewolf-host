@@ -21,6 +21,7 @@ import {
   resolveTimedDeathSkillTarget,
   computeWinResult,
   projectDeathState,
+  shouldShowSheriffStepForState,
   WinResult,
 } from '../store/gameStore';
 import PlayerButton, { RoleInfo } from '../components/PlayerButton';
@@ -39,12 +40,12 @@ export default function DayScreen() {
   const {
     gameMode, playerCount, currentNight, selectedRoles, nightOrder,
     nightActions, nightHistory, deadPlayers, upperDeadPlayers, playerCardMap, roleMembersMap,
-    singleWinRule, winResult,
+    singleWinRule, sheriffExplosionRule, sheriffExplosionCount, sheriffBadgeDestroyed, winResult,
     dayCommitRestoreVersion,
     sheriffPlayer, lostVotePlayers, idiotFlippedPlayers,
     cupidLovers, bishopHolder, knightUsed, goldenBabyPlayers, monkVoteTarget, slaveTraderSlaves,
     fireWolfBurnedPlayers, fireWolfBurnedCards, fireWolfBurnRecords,
-    setSheriff, endDay, setBishopHolder, setKnightUsed, setRoleMembers, setPlayerCardRole, rewindNightStep, resetGameProgress,
+    setSheriff, setSheriffExplosionState, endDay, setBishopHolder, setKnightUsed, setRoleMembers, setPlayerCardRole, rewindNightStep, resetGameProgress,
     setMonkVoteTarget, setMonkVoteCard, captureDayStepSnapshot, restoreDayStepSnapshot,
   } = useGameStore();
 
@@ -154,7 +155,19 @@ export default function DayScreen() {
   };
 
   const sheriffDiedLastNight = sheriffPlayer !== null && nightChainDeaths.includes(sheriffPlayer);
-  const shouldShowSheriffStep = currentNight === 1 || sheriffDiedLastNight;
+  const pendingSecondSheriffElection =
+    sheriffExplosionRule === 'double' &&
+    sheriffExplosionCount === 1 &&
+    sheriffPlayer === null &&
+    !sheriffBadgeDestroyed;
+  const shouldShowSheriffStep = shouldShowSheriffStepForState(
+    currentNight,
+    sheriffDiedLastNight,
+    sheriffPlayer,
+    sheriffExplosionRule,
+    sheriffExplosionCount,
+    sheriffBadgeDestroyed,
+  );
 
   useEffect(() => {
     navigation.setOptions({
@@ -182,6 +195,8 @@ export default function DayScreen() {
     if (fromStep === 0) {
       setBadgeAction(null);
       setBadgeRecipient(null);
+      setSheriffExplosionMode(false);
+      setSheriffExplosionPlayer(null);
       setLocalSheriff(() => {
         if (!sheriffPlayer) return null;
         if (nightChainDeaths.includes(sheriffPlayer) || deadPlayers.includes(sheriffPlayer)) return null;
@@ -268,6 +283,8 @@ export default function DayScreen() {
   // Step 0: badge handover when sheriff died last night
   const [badgeAction, setBadgeAction] = useState<BadgeAction>(null);
   const [badgeRecipient, setBadgeRecipient] = useState<number | null>(null);
+  const [sheriffExplosionMode, setSheriffExplosionMode] = useState(false);
+  const [sheriffExplosionPlayer, setSheriffExplosionPlayer] = useState<number | null>(null);
 
   // Step 1: 夜晚摘要展開狀態
   const [showNightSummary, setShowNightSummary] = useState(false);
@@ -550,6 +567,18 @@ export default function DayScreen() {
 
   // 公布死訊前（step 0 警長競選）：死亡尚未生效，所有非前一局確認死亡者皆可競選
   const sheriffCandidates = playerNums.filter(p => !deadPlayers.includes(p));
+  const wolfTeamRoleIds = new Set(ROLES.filter(role => role.team === 'wolf').map(role => role.id));
+  const sheriffExplosionCandidates = sheriffCandidates.filter(player => {
+    const roleId = getActiveRoleAtPhaseStart(
+      player,
+      gameMode,
+      roleMembersMap,
+      playerCardMap,
+      upperDeadPlayers,
+      fireWolfBurnRecords,
+    );
+    return roleId !== undefined && wolfTeamRoleIds.has(roleId);
+  });
 
   // Alive players（死亡公布後使用）
   // 雙身分：昨晚上牌死 → 以下牌繼續，有全程白天參與權
@@ -939,6 +968,7 @@ export default function DayScreen() {
 
   const disabledGridStyle = { bg: Colors.surface, border: Colors.textMuted, textColor: Colors.textMuted };
   const sheriffBadgeTorn =
+    sheriffBadgeDestroyed ||
     badgeAction === 'tear' ||
     nightDeathBadgeAction === 'tear' ||
     speechBadgeAction === 'tear' ||
@@ -1006,20 +1036,56 @@ export default function DayScreen() {
     // Case C: no sheriff → election
     return (
       <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollPad}>
-        <Text style={styles.hint}>點選當選玩家（再次點擊取消，可不設警長）</Text>
+        <Text style={styles.hint}>
+          {sheriffExplosionMode
+            ? '點選一名狼隊角色自爆（再次點擊撤回）'
+            : '點選當選玩家（再次點擊取消，可不設警長）'}
+        </Text>
         {renderGrid(
           playerNums,
-          n => !sheriffCandidates.includes(n)
+          n => sheriffExplosionMode && n === sheriffExplosionPlayer
+            ? { bg: Colors.danger + '25', border: Colors.danger, textColor: Colors.danger }
+            : sheriffExplosionMode && !sheriffExplosionCandidates.includes(n)
+            ? disabledGridStyle
+            : !sheriffCandidates.includes(n)
             ? disabledGridStyle
             : n === localSheriff
             ? { bg: Colors.warning + '25', border: Colors.warning, textColor: Colors.warning }
             : { bg: Colors.surface, border: Colors.surfaceLight, textColor: Colors.textDim },
-          n => n === localSheriff ? '⭐' : undefined,
+          n => sheriffExplosionMode && n === sheriffExplosionPlayer ? '爆' : n === localSheriff ? '⭐' : undefined,
           n => {
             if (!sheriffCandidates.includes(n)) return;
+            if (sheriffExplosionMode) {
+              if (!sheriffExplosionCandidates.includes(n)) return;
+              setSheriffExplosionPlayer(previous => previous === n ? null : n);
+              setLocalSheriff(null);
+              return;
+            }
             setLocalSheriff(p => p === n ? null : n);
+            setSheriffExplosionPlayer(null);
           },
-          { isDisabled: n => !sheriffCandidates.includes(n) },
+          {
+            isDisabled: n => sheriffExplosionMode
+              ? !sheriffExplosionCandidates.includes(n)
+              : !sheriffCandidates.includes(n),
+          },
+        )}
+        {sheriffExplosionRule !== 'none' && (
+          <TouchableOpacity
+            style={[styles.abilityBtn, sheriffExplosionMode && styles.abilityBtnOn, { marginTop: 10 }]}
+            onPress={() => {
+              setSheriffExplosionMode(previous => !previous);
+              setSheriffExplosionPlayer(null);
+              setLocalSheriff(null);
+            }}
+          >
+            <Text style={[styles.abilityBtnText, sheriffExplosionMode && { color: Colors.danger }]}>💥 自爆</Text>
+          </TouchableOpacity>
+        )}
+        {pendingSecondSheriffElection && (
+          <View style={[styles.banner, { borderColor: Colors.warning, marginTop: 10 }]}>
+            <Text style={[styles.bannerText, { color: Colors.warning }]}>雙爆規則：昨日已有一名狼人自爆</Text>
+          </View>
         )}
       </ScrollView>
     );
@@ -2474,6 +2540,22 @@ export default function DayScreen() {
         if (badgeAction === 'tear') setLocalSheriff(null);
         else if (badgeAction === 'handover' && badgeRecipient !== null) setLocalSheriff(badgeRecipient);
       }
+      if (sheriffExplosionPlayer !== null) {
+        const nextExplosionCount = sheriffExplosionCount + 1;
+        const badgeDestroyed =
+          sheriffExplosionRule === 'single' ||
+          (sheriffExplosionRule === 'double' && nextExplosionCount >= 2);
+        setSheriff(null);
+        setLocalSheriff(null);
+        setSheriffExplosionState(nextExplosionCount, badgeDestroyed);
+        setSpeechDeaths(previous => [...new Set([...previous, sheriffExplosionPlayer])]);
+        appendDayDeathRounds([sheriffExplosionPlayer]);
+        setLastWordsPlayer(sheriffExplosionPlayer);
+        setSpeechDeathNotice('self_destruct');
+      } else if (pendingSecondSheriffElection) {
+        // The second election ended without another explosion, so the two-day sequence expires.
+        setSheriffExplosionState(0, false);
+      }
       setStep(1);
       return;
     }
@@ -2606,6 +2688,7 @@ export default function DayScreen() {
     if (step === 0 && sheriffDiedLastNight) {
       return badgeAction === 'tear' || (badgeAction === 'handover' && badgeRecipient !== null);
     }
+    if (step === 0 && sheriffExplosionMode) return sheriffExplosionPlayer !== null;
     if (step === 1 && pendingNightDeathSkill) return true;
     if (step === 1 && nightDeathKilledSheriff && !nightDeathBadgeResolved) {
       if (!nightDeathBadgeAction) return false;
@@ -2672,6 +2755,14 @@ export default function DayScreen() {
     }
     if (step === 0 && sheriffDiedLastNight) {
       return badgeAction === 'tear' ? '確認撕毀' : badgeAction === 'handover' ? '確認移交' : '確認';
+    }
+    if (step === 0 && sheriffExplosionPlayer !== null) {
+      const willDestroyBadge =
+        sheriffExplosionRule === 'single' ||
+        (sheriffExplosionRule === 'double' && sheriffExplosionCount + 1 >= 2);
+      return willDestroyBadge
+        ? `確認 ${sheriffExplosionPlayer}號自爆並吞警徽`
+        : `確認 ${sheriffExplosionPlayer}號自爆`;
     }
     if (step === 2 && knightDuelActive && knightTarget !== null)
       return isActiveWolf(knightTarget) ? '⚔️ 騎士擊殺狼人 — 進入夜晚' : '⚔️ 確認決鬥 — 遊戲繼續';

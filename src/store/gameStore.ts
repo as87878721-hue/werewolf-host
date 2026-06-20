@@ -73,6 +73,23 @@ export interface GoldenBabyConfig {
 }
 
 export type SingleWinRule = 'edge' | 'city';
+export type SheriffExplosionRule = 'none' | 'single' | 'double';
+
+export function shouldShowSheriffStepForState(
+  currentNight: number,
+  sheriffDiedLastNight: boolean,
+  sheriffPlayer: number | null,
+  rule: SheriffExplosionRule,
+  explosionCount: number,
+  badgeDestroyed: boolean,
+): boolean {
+  return currentNight === 1 || sheriffDiedLastNight || (
+    rule === 'double' &&
+    explosionCount === 1 &&
+    sheriffPlayer === null &&
+    !badgeDestroyed
+  );
+}
 
 export interface WinResult {
   winner: 'wolf' | 'village';
@@ -93,6 +110,7 @@ export interface GameConfigSnapshot {
   selectedRoles: RoleEntry[];
   goldenBabyConfig: GoldenBabyConfig;
   singleWinRule: SingleWinRule;
+  sheriffExplosionRule?: SheriffExplosionRule;
 }
 
 // 預設 9 人標準局
@@ -348,6 +366,7 @@ export const DEFAULT_SINGLE_CONFIG: GameConfigSnapshot = {
   selectedRoles: [...DEFAULT_ROLES],
   goldenBabyConfig: { min: 0, max: 0 },
   singleWinRule: 'edge',
+  sheriffExplosionRule: 'none',
 };
 
 export const DEFAULT_DUAL_CONFIG: GameConfigSnapshot = {
@@ -371,6 +390,7 @@ export const DEFAULT_DUAL_CONFIG: GameConfigSnapshot = {
   ],
   goldenBabyConfig: { min: 2, max: 2 },
   singleWinRule: 'edge',
+  sheriffExplosionRule: 'none',
 };
 
 interface GameState {
@@ -391,6 +411,8 @@ interface GameState {
   upperDeadPlayers: number[];
   playerCardMap: Record<number, { upper?: string; lower?: string }>;
   sheriffPlayer: number | null;
+  sheriffExplosionCount: number;
+  sheriffBadgeDestroyed: boolean;
   lostVotePlayers: number[];
   idiotFlippedPlayers: number[];
   anubisScaledPlayers: number[];
@@ -414,6 +436,7 @@ interface GameState {
   goldenBabyConfig: GoldenBabyConfig;
   goldenBabyPlayers: number[];
   singleWinRule: SingleWinRule;
+  sheriffExplosionRule: SheriffExplosionRule;
   winResult: WinResult | null;
   gameLog: GameLogEntry[];
   nightStepSnapshots: Record<number, GameUndoSnapshot>;
@@ -428,6 +451,7 @@ interface GameState {
   setGoldenBabyConfig: (config: GoldenBabyConfig) => void;
   setGoldenBabyPlayers: (players: number[]) => void;
   setSingleWinRule: (rule: SingleWinRule) => void;
+  setSheriffExplosionRule: (rule: SheriffExplosionRule) => void;
   setConfigName: (name: string) => void;
   applyConfig: (config: GameConfigSnapshot) => void;
   saveCurrentConfig: () => void;
@@ -455,6 +479,7 @@ interface GameState {
   setRoleMembers: (roleId: string, members: number[]) => void;
   setPlayerCardRole: (player: number, slot: 'upper' | 'lower', roleId: string) => void;
   setSheriff: (player: number | null) => void;
+  setSheriffExplosionState: (count: number, badgeDestroyed: boolean) => void;
   setBishopHolder: (player: number | null) => void;
   setKnightUsed: (used: boolean) => void;
   setMonkVoteTarget: (player: number | null) => void;
@@ -480,6 +505,8 @@ interface GameUndoSnapshot {
   upperDeadPlayers: number[];
   playerCardMap: Record<number, { upper?: string; lower?: string }>;
   sheriffPlayer: number | null;
+  sheriffExplosionCount: number;
+  sheriffBadgeDestroyed: boolean;
   lostVotePlayers: number[];
   idiotFlippedPlayers: number[];
   anubisScaledPlayers: number[];
@@ -536,6 +563,8 @@ function createGameUndoSnapshot(state: GameState): GameUndoSnapshot {
     upperDeadPlayers: [...state.upperDeadPlayers],
     playerCardMap: clonePlayerCardMap,
     sheriffPlayer: state.sheriffPlayer,
+    sheriffExplosionCount: state.sheriffExplosionCount,
+    sheriffBadgeDestroyed: state.sheriffBadgeDestroyed,
     lostVotePlayers: [...state.lostVotePlayers],
     idiotFlippedPlayers: [...state.idiotFlippedPlayers],
     anubisScaledPlayers: [...state.anubisScaledPlayers],
@@ -583,6 +612,8 @@ function restoreGameUndoSnapshot(snapshot: GameUndoSnapshot) {
       Object.entries(snapshot.playerCardMap).map(([player, cards]) => [Number(player), { ...cards }]),
     ),
     sheriffPlayer: snapshot.sheriffPlayer,
+    sheriffExplosionCount: snapshot.sheriffExplosionCount,
+    sheriffBadgeDestroyed: snapshot.sheriffBadgeDestroyed,
     lostVotePlayers: [...snapshot.lostVotePlayers],
     idiotFlippedPlayers: [...snapshot.idiotFlippedPlayers],
     anubisScaledPlayers: [...snapshot.anubisScaledPlayers],
@@ -673,6 +704,8 @@ export const useGameStore = create<GameState>((set, get) => ({
   upperDeadPlayers: [],
   playerCardMap: {},
   sheriffPlayer: null,
+  sheriffExplosionCount: 0,
+  sheriffBadgeDestroyed: false,
   lostVotePlayers: [],
   idiotFlippedPlayers: [],
   anubisScaledPlayers: [],
@@ -696,6 +729,7 @@ export const useGameStore = create<GameState>((set, get) => ({
   goldenBabyConfig: { min: 0, max: 0 },
   goldenBabyPlayers: [],
   singleWinRule: DEFAULT_SINGLE_CONFIG.singleWinRule,
+  sheriffExplosionRule: DEFAULT_SINGLE_CONFIG.sheriffExplosionRule ?? 'none',
   winResult: null,
   gameLog: [],
   nightStepSnapshots: {},
@@ -715,6 +749,7 @@ export const useGameStore = create<GameState>((set, get) => ({
   }),
   setGoldenBabyPlayers: (players) => set({ goldenBabyPlayers: [...new Set(players)] }),
   setSingleWinRule: (rule) => set({ singleWinRule: rule }),
+  setSheriffExplosionRule: (rule) => set({ sheriffExplosionRule: rule }),
   setConfigName: (name) => set({ configName: name }),
   applyConfig: (config) => set({
     gameMode: config.mode,
@@ -723,6 +758,7 @@ export const useGameStore = create<GameState>((set, get) => ({
     goldenBabyConfig: config.mode === 'dual' ? { ...config.goldenBabyConfig } : { min: 0, max: 0 },
     goldenBabyPlayers: [],
     singleWinRule: config.singleWinRule ?? 'edge',
+    sheriffExplosionRule: config.sheriffExplosionRule ?? 'none',
     winResult: null,
     configName: config.name,
     nightOrder: [],
@@ -736,6 +772,9 @@ export const useGameStore = create<GameState>((set, get) => ({
     playerCardMap: {},
     deadPlayers: [],
     upperDeadPlayers: [],
+    sheriffPlayer: null,
+    sheriffExplosionCount: 0,
+    sheriffBadgeDestroyed: false,
     lastDayExiledRoleId: null,
     slaveTraderSlaves: [],
     fireWolfBurnedPlayers: [],
@@ -750,7 +789,7 @@ export const useGameStore = create<GameState>((set, get) => ({
     monkVoteCard: null,
   }),
   saveCurrentConfig: () => {
-    const { gameMode, playerCount, selectedRoles, goldenBabyConfig, configName, singleWinRule } = get();
+    const { gameMode, playerCount, selectedRoles, goldenBabyConfig, configName, singleWinRule, sheriffExplosionRule } = get();
     const snapshot: GameConfigSnapshot = {
       name: configName.trim() || (gameMode === 'dual' ? DEFAULT_DUAL_CONFIG.name : DEFAULT_SINGLE_CONFIG.name),
       mode: gameMode,
@@ -758,6 +797,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       selectedRoles: selectedRoles.map(role => ({ ...role })),
       goldenBabyConfig: gameMode === 'dual' ? { ...goldenBabyConfig } : { min: 0, max: 0 },
       singleWinRule,
+      sheriffExplosionRule,
     };
     set(state => ({
       configName: snapshot.name,
@@ -798,7 +838,7 @@ export const useGameStore = create<GameState>((set, get) => ({
   },
 
   initNightOrder: () => {
-    const { selectedRoles, goldenBabyConfig, gameMode, singleWinRule } = get();
+    const { selectedRoles, goldenBabyConfig, gameMode, singleWinRule, sheriffExplosionRule } = get();
     const roleIds = new Set(selectedRoles.map(r => r.roleId));
     if (gameMode === 'dual' && goldenBabyConfig.max > 0) roleIds.add('golden_baby');
     const order = ROLES
@@ -813,6 +853,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       selectedRoles: selectedRoles.map(role => ({ ...role })),
       goldenBabyConfig: gameMode === 'dual' ? { ...goldenBabyConfig } : { min: 0, max: 0 },
       singleWinRule,
+      sheriffExplosionRule,
     };
     set(state => ({
       nightOrder: order,
@@ -1351,6 +1392,8 @@ export const useGameStore = create<GameState>((set, get) => ({
     deadPlayers: [],
     upperDeadPlayers: [],
     sheriffPlayer: null,
+    sheriffExplosionCount: 0,
+    sheriffBadgeDestroyed: false,
     lostVotePlayers: [],
     idiotFlippedPlayers: [],
     anubisScaledPlayers: [],
@@ -1382,6 +1425,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       gameMode: mode,
       playerCount: baseConfig.playerCount,
       selectedRoles: baseConfig.selectedRoles.map(role => ({ ...role })),
+      sheriffExplosionRule: baseConfig.sheriffExplosionRule ?? 'none',
       nightOrder: [],
       currentNight: 1,
       currentStep: 0,
@@ -1400,6 +1444,8 @@ export const useGameStore = create<GameState>((set, get) => ({
       deadPlayers: [],
       upperDeadPlayers: [],
       sheriffPlayer: null,
+      sheriffExplosionCount: 0,
+      sheriffBadgeDestroyed: false,
       lostVotePlayers: [],
       idiotFlippedPlayers: [],
       anubisScaledPlayers: [],
@@ -1430,6 +1476,10 @@ export const useGameStore = create<GameState>((set, get) => ({
   },
 
   setSheriff: (player) => set({ sheriffPlayer: player }),
+  setSheriffExplosionState: (count, badgeDestroyed) => set({
+    sheriffExplosionCount: Math.max(0, Math.min(2, count)),
+    sheriffBadgeDestroyed: badgeDestroyed,
+  }),
   setBishopHolder: (player) => set({ bishopHolder: player }),
   setKnightUsed: (used) => set({ knightUsed: used }),
   setMonkVoteTarget: (player) => set({ monkVoteTarget: player }),

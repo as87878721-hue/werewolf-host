@@ -39,6 +39,7 @@ export default function SetupScreen() {
     selectedRoles,
     goldenBabyConfig,
     singleWinRule,
+    sheriffExplosionRule,
     configName,
     addRole,
     removeRole,
@@ -46,6 +47,7 @@ export default function SetupScreen() {
     setPlayerCount,
     setGoldenBabyConfig,
     setSingleWinRule,
+    setSheriffExplosionRule,
     setConfigName,
     saveCurrentConfig,
   } = useGameStore();
@@ -164,6 +166,28 @@ export default function SetupScreen() {
                 </Text>
               </View>
             )}
+
+            <View style={styles.winRuleBox}>
+              <Text style={styles.fieldLabel}>警長競選自爆</Text>
+              <View style={styles.winRuleRow}>
+                {([
+                  ['none', '不吞'],
+                  ['single', '單爆吞警徽'],
+                  ['double', '雙爆吞警徽'],
+                ] as const).map(([rule, label]) => (
+                  <TouchableOpacity
+                    key={rule}
+                    style={[styles.winRuleBtn, sheriffExplosionRule === rule && styles.winRuleBtnActive]}
+                    onPress={() => setSheriffExplosionRule(rule)}
+                    activeOpacity={0.75}
+                  >
+                    <Text style={[styles.winRuleText, sheriffExplosionRule === rule && styles.winRuleTextActive]}>
+                      {label}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </View>
 
             {gameMode === 'dual' && (
               <>

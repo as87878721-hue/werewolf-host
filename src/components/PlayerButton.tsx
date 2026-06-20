@@ -19,6 +19,8 @@ interface Props {
   isDualMode?: boolean;
   upperRole?: RoleInfo;
   lowerRole?: RoleInfo;
+  upperRoleTextColor?: string;
+  lowerRoleTextColor?: string;
   upperDead?: boolean;
   disabled?: boolean;
   onPress: () => void;
@@ -26,7 +28,7 @@ interface Props {
 
 export default function PlayerButton({
   num, size, bg, border, textColor, label, sublabel,
-  isDead, isDualMode, upperRole, lowerRole, upperDead, disabled,
+  isDead, isDualMode, upperRole, lowerRole, upperRoleTextColor, lowerRoleTextColor, upperDead, disabled,
   onPress,
 }: Props) {
   const radius = size * 0.18;
@@ -139,7 +141,7 @@ export default function PlayerButton({
                   left: size * 0.05,
                   fontSize: roleFontSize,
                   fontWeight: 'bold',
-                  color: Colors.text,
+                  color: upperRoleTextColor ?? Colors.text,
                   opacity: isDead ? 0.85 : upperDead ? 0.7 : 0.9,
                   maxWidth: size * 0.48,
                 }}
@@ -158,7 +160,7 @@ export default function PlayerButton({
                   right: size * 0.05,
                   fontSize: roleFontSize,
                   fontWeight: 'bold',
-                  color: Colors.text,
+                  color: lowerRoleTextColor ?? Colors.text,
                   opacity: 0.9,
                   maxWidth: size * 0.48,
                   textAlign: 'right',

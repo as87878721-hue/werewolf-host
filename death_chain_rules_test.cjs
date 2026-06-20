@@ -310,18 +310,18 @@ expectEqual(
 );
 
 expectEqual(
-  'tengu first knife can be saved but second knife cannot',
+  'legacy two-target tengu action only keeps the first saved knife',
   computeNightDeaths(
     [
       { roleId: 'tengu', members: [1], tenguKillTargets: [5, 6] },
       { roleId: 'witch', members: [4], saveTarget: 5 },
     ],
   ),
-  [6],
+  [],
 );
 
 expectEqual(
-  'guard protects tengu second knife',
+  'legacy two-target tengu action ignores the removed second knife',
   computeNightDeaths(
     [
       { roleId: 'guard', members: [2], protectTarget: 6 },
@@ -388,7 +388,17 @@ expectEqual(
     { 3: { upper: 'seer', lower: 'werewolf' } },
     [],
   ),
-  { player: 3, isWolf: true, roleName: '狼人' },
+  { player: 3, isWolf: true },
+);
+
+expectEqual(
+  'gravedigger treats an undefined lower card as good without revealing a role',
+  getGravediggerLowerInfo(
+    { player: 4, upperWasAlive: true },
+    { 4: { upper: 'werewolf' } },
+    [],
+  ),
+  { player: 4, isWolf: false },
 );
 
 expectEqual(

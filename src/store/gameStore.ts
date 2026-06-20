@@ -46,6 +46,8 @@ export interface NightAction {
   explorerResult?: number | 'unknown';
   mummySealedRole?: string;
   monkVoteTarget?: number;
+  invalidatedByFireWolf?: boolean;
+  invalidatedPlayers?: number[];
 }
 
 export interface NightRecord {
@@ -56,6 +58,14 @@ export interface NightRecord {
 
 type RoleCardSlot = 'upper' | 'lower';
 type PlayerRoleCard = { player: number; slot: RoleCardSlot };
+
+export interface FireWolfBurnRecord {
+  player: number;
+  slot: 'single' | RoleCardSlot;
+  originalRoleId: string;
+  night: number;
+  step: number;
+}
 
 export interface GoldenBabyConfig {
   min: number;
@@ -115,6 +125,22 @@ function isVillagerLikeRoleId(roleId: string | undefined): boolean {
 
 function findSingleRoleForPlayer(player: number, roleMembersMap: Record<string, number[]>): string | undefined {
   return Object.entries(roleMembersMap).find(([, members]) => (members ?? []).includes(player))?.[0];
+}
+
+export function getFireWolfEffectiveRole(
+  player: number,
+  originalRoleId: string | undefined,
+  gameMode: GameMode,
+  upperDeadPlayers: number[] = [],
+  burnRecords: FireWolfBurnRecord[] = [],
+): string | undefined {
+  if (!originalRoleId) return undefined;
+  const activeSlot = gameMode === 'single'
+    ? 'single'
+    : upperDeadPlayers.includes(player) ? 'lower' : 'upper';
+  return burnRecords.some(record => record.player === player && record.slot === activeSlot)
+    ? 'villager'
+    : originalRoleId;
 }
 
 const uniqueNums = (players: number[]) => [...new Set(players)];
@@ -254,6 +280,65 @@ export function projectDeathState(
   };
 }
 
+export function getTenguKillAllowance({
+  gameMode,
+  selectedRoles,
+  roleMembersMap,
+  playerCardMap,
+  upperDeadPlayers,
+  deadPlayers,
+  actingTenguPlayers,
+}: {
+  gameMode: GameMode;
+  selectedRoles: RoleEntry[];
+  roleMembersMap: Record<string, number[]>;
+  playerCardMap: Record<number, { upper?: string; lower?: string }>;
+  upperDeadPlayers: number[];
+  deadPlayers: number[];
+  actingTenguPlayers: number[];
+}): number {
+  const wolfRoleIds = new Set(ROLES.filter(role => role.team === 'wolf').map(role => role.id));
+  const configuredWolfCards = selectedRoles
+    .filter(entry => wolfRoleIds.has(entry.roleId))
+    .reduce((sum, entry) => sum + entry.count, 0);
+  const excludedTenguCards = Math.min(
+    actingTenguPlayers.length,
+    selectedRoles.find(entry => entry.roleId === 'tengu')?.count ?? 0,
+  );
+  const requiredDeadWolfCards = Math.max(0, configuredWolfCards - excludedTenguCards);
+
+  if (gameMode === 'single') {
+    const deadWolfPlayers = new Set<number>();
+    for (const [roleId, members] of Object.entries(roleMembersMap)) {
+      if (!wolfRoleIds.has(roleId)) continue;
+      for (const player of members ?? []) {
+        if (roleId === 'tengu' && actingTenguPlayers.includes(player)) continue;
+        if (deadPlayers.includes(player)) deadWolfPlayers.add(player);
+      }
+    }
+    return deadWolfPlayers.size >= requiredDeadWolfCards ? 1 : 0;
+  }
+
+  let deadWolfCards = 0;
+  for (const [playerText, cards] of Object.entries(playerCardMap)) {
+    const player = Number(playerText);
+    for (const slot of ['upper', 'lower'] as const) {
+      const roleId = cards[slot];
+      if (!roleId || !wolfRoleIds.has(roleId)) continue;
+      const isActingTenguCard =
+        roleId === 'tengu' &&
+        actingTenguPlayers.includes(player) &&
+        (slot === 'upper' ? !upperDeadPlayers.includes(player) : upperDeadPlayers.includes(player));
+      if (isActingTenguCard) continue;
+      const cardIsDead = slot === 'upper'
+        ? upperDeadPlayers.includes(player) || deadPlayers.includes(player)
+        : deadPlayers.includes(player);
+      if (cardIsDead) deadWolfCards += 1;
+    }
+  }
+  return deadWolfCards >= requiredDeadWolfCards ? 1 : 0;
+}
+
 export type GameMode = 'single' | 'dual';
 
 export const DEFAULT_SINGLE_CONFIG: GameConfigSnapshot = {
@@ -318,6 +403,7 @@ interface GameState {
   slaveTraderSlaves: number[];
   fireWolfBurnedPlayers: number[];
   fireWolfBurnedCards: Array<{ player: number; slot: 'upper' | 'lower' }>;
+  fireWolfBurnRecords: FireWolfBurnRecord[];
   fireWolfUsed: boolean;
   spiritWolfMimic: { target: number; roleId: string; availableNight: number } | null;
   spiritWolfSaveUsed: boolean;
@@ -332,6 +418,8 @@ interface GameState {
   gameLog: GameLogEntry[];
   nightStepSnapshots: Record<number, GameUndoSnapshot>;
   dayStepSnapshots: Record<number, GameUndoSnapshot>;
+  dayCommitSnapshot: PhaseTransitionSnapshot | null;
+  dayCommitRestoreVersion: number;
   configName: string;
   lastConfigs: Partial<Record<GameMode, GameConfigSnapshot>>;
   savedConfigs: Partial<Record<GameMode, GameConfigSnapshot[]>>;
@@ -355,6 +443,7 @@ interface GameState {
   captureNightStepSnapshot: (step: number) => void;
   captureDayStepSnapshot: (step: number) => void;
   restoreDayStepSnapshot: (step: number) => void;
+  restoreDayCommitSnapshot: () => boolean;
   nextStep: () => void;
   prevStep: () => void;
   rewindNightStep: (step: number) => void;
@@ -381,6 +470,7 @@ interface GameState {
 
 interface GameUndoSnapshot {
   nightActions: NightAction[];
+  nightHistory: NightRecord[];
   saveUsed: boolean;
   poisonUsed: boolean;
   sharpshooterUsed: boolean;
@@ -402,6 +492,7 @@ interface GameUndoSnapshot {
   slaveTraderSlaves: number[];
   fireWolfBurnedPlayers: number[];
   fireWolfBurnedCards: Array<{ player: number; slot: 'upper' | 'lower' }>;
+  fireWolfBurnRecords: FireWolfBurnRecord[];
   fireWolfUsed: boolean;
   spiritWolfMimic: { target: number; roleId: string; availableNight: number } | null;
   spiritWolfSaveUsed: boolean;
@@ -414,6 +505,14 @@ interface GameUndoSnapshot {
   gameLog: GameLogEntry[];
 }
 
+interface PhaseTransitionSnapshot {
+  state: GameUndoSnapshot;
+  currentNight: number;
+  currentStep: number;
+  nightStepSnapshots: Record<number, GameUndoSnapshot>;
+  dayStepSnapshots: Record<number, GameUndoSnapshot>;
+}
+
 function createGameUndoSnapshot(state: GameState): GameUndoSnapshot {
   const cloneRoleMembersMap = Object.fromEntries(
     Object.entries(state.roleMembersMap).map(([roleId, members]) => [roleId, [...members]]),
@@ -423,6 +522,11 @@ function createGameUndoSnapshot(state: GameState): GameUndoSnapshot {
   );
   return {
     nightActions: state.nightActions.map(action => ({ ...action })),
+    nightHistory: state.nightHistory.map(record => ({
+      ...record,
+      actions: record.actions.map(action => ({ ...action })),
+      summary: [...record.summary],
+    })),
     saveUsed: state.saveUsed,
     poisonUsed: state.poisonUsed,
     sharpshooterUsed: state.sharpshooterUsed,
@@ -444,6 +548,7 @@ function createGameUndoSnapshot(state: GameState): GameUndoSnapshot {
     slaveTraderSlaves: [...state.slaveTraderSlaves],
     fireWolfBurnedPlayers: [...state.fireWolfBurnedPlayers],
     fireWolfBurnedCards: state.fireWolfBurnedCards.map(card => ({ ...card })),
+    fireWolfBurnRecords: state.fireWolfBurnRecords.map(record => ({ ...record })),
     fireWolfUsed: state.fireWolfUsed,
     spiritWolfMimic: state.spiritWolfMimic ? { ...state.spiritWolfMimic } : null,
     spiritWolfSaveUsed: state.spiritWolfSaveUsed,
@@ -460,6 +565,11 @@ function createGameUndoSnapshot(state: GameState): GameUndoSnapshot {
 function restoreGameUndoSnapshot(snapshot: GameUndoSnapshot) {
   return {
     nightActions: snapshot.nightActions.map(action => ({ ...action })),
+    nightHistory: snapshot.nightHistory.map(record => ({
+      ...record,
+      actions: record.actions.map(action => ({ ...action })),
+      summary: [...record.summary],
+    })),
     saveUsed: snapshot.saveUsed,
     poisonUsed: snapshot.poisonUsed,
     sharpshooterUsed: snapshot.sharpshooterUsed,
@@ -485,6 +595,7 @@ function restoreGameUndoSnapshot(snapshot: GameUndoSnapshot) {
     slaveTraderSlaves: [...snapshot.slaveTraderSlaves],
     fireWolfBurnedPlayers: [...snapshot.fireWolfBurnedPlayers],
     fireWolfBurnedCards: snapshot.fireWolfBurnedCards.map(card => ({ ...card })),
+    fireWolfBurnRecords: snapshot.fireWolfBurnRecords.map(record => ({ ...record })),
     fireWolfUsed: snapshot.fireWolfUsed,
     spiritWolfMimic: snapshot.spiritWolfMimic ? { ...snapshot.spiritWolfMimic } : null,
     spiritWolfSaveUsed: snapshot.spiritWolfSaveUsed,
@@ -495,6 +606,24 @@ function restoreGameUndoSnapshot(snapshot: GameUndoSnapshot) {
     goldenBabyPlayers: [...snapshot.goldenBabyPlayers],
     winResult: snapshot.winResult ? { ...snapshot.winResult } : null,
     gameLog: snapshot.gameLog.map(log => ({ ...log })),
+  };
+}
+
+function cloneUndoSnapshots(snapshots: Record<number, GameUndoSnapshot>) {
+  return Object.fromEntries(
+    Object.entries(snapshots).map(([step, snapshot]) => [Number(step), {
+      ...restoreGameUndoSnapshot(snapshot),
+    } as GameUndoSnapshot]),
+  );
+}
+
+function createPhaseTransitionSnapshot(state: GameState): PhaseTransitionSnapshot {
+  return {
+    state: createGameUndoSnapshot(state),
+    currentNight: state.currentNight,
+    currentStep: state.currentStep,
+    nightStepSnapshots: cloneUndoSnapshots(state.nightStepSnapshots),
+    dayStepSnapshots: cloneUndoSnapshots(state.dayStepSnapshots),
   };
 }
 
@@ -556,6 +685,7 @@ export const useGameStore = create<GameState>((set, get) => ({
   slaveTraderSlaves: [],
   fireWolfBurnedPlayers: [],
   fireWolfBurnedCards: [],
+  fireWolfBurnRecords: [],
   fireWolfUsed: false,
   spiritWolfMimic: null,
   spiritWolfSaveUsed: false,
@@ -570,6 +700,8 @@ export const useGameStore = create<GameState>((set, get) => ({
   gameLog: [],
   nightStepSnapshots: {},
   dayStepSnapshots: {},
+  dayCommitSnapshot: null,
+  dayCommitRestoreVersion: 0,
   configName: DEFAULT_SINGLE_CONFIG.name,
   lastConfigs: {},
   savedConfigs: {},
@@ -598,6 +730,8 @@ export const useGameStore = create<GameState>((set, get) => ({
     nightActions: [],
     nightStepSnapshots: {},
     dayStepSnapshots: {},
+    dayCommitSnapshot: null,
+    dayCommitRestoreVersion: 0,
     roleMembersMap: {},
     playerCardMap: {},
     deadPlayers: [],
@@ -606,6 +740,7 @@ export const useGameStore = create<GameState>((set, get) => ({
     slaveTraderSlaves: [],
     fireWolfBurnedPlayers: [],
     fireWolfBurnedCards: [],
+    fireWolfBurnRecords: [],
     fireWolfUsed: false,
     spiritWolfMimic: null,
     spiritWolfSaveUsed: false,
@@ -704,9 +839,49 @@ export const useGameStore = create<GameState>((set, get) => ({
   },
 
   recordAction: (action) => {
-    const { nightActions, currentStep, checkedPlayers, gameMode, upperDeadPlayers } = get();
-    const updated = [...nightActions];
+    const {
+      nightActions, currentNight, currentStep, checkedPlayers, gameMode, upperDeadPlayers,
+      playerCardMap, roleMembersMap, nightHistory,
+    } = get();
+    let updated = [...nightActions];
     updated[currentStep] = action;
+    let invalidatedAction: NightAction | undefined;
+
+    if (action.roleId === 'fire_wolf' && action.fireWolfTarget !== undefined) {
+      const originalTargetRole = gameMode === 'dual'
+        ? playerCardMap[action.fireWolfTarget]?.[upperDeadPlayers.includes(action.fireWolfTarget) ? 'lower' : 'upper']
+        : findSingleRoleForPlayer(action.fireWolfTarget, roleMembersMap);
+      const targetRole = getFireWolfEffectiveRole(
+        action.fireWolfTarget,
+        originalTargetRole,
+        gameMode,
+        upperDeadPlayers,
+        get().fireWolfBurnRecords,
+      );
+      if (isGodRoleId(targetRole)) {
+        updated = updated.map((existing, index) => {
+          if (index === currentStep || existing.roleId !== targetRole || !existing.members.includes(action.fireWolfTarget!)) {
+            return existing;
+          }
+          invalidatedAction = existing;
+          const remainingMembers = existing.members.filter(player => player !== action.fireWolfTarget);
+          return remainingMembers.length > 0
+            ? {
+                ...existing,
+                members: remainingMembers,
+                invalidatedByFireWolf: true,
+                invalidatedPlayers: [...new Set([...(existing.invalidatedPlayers ?? []), action.fireWolfTarget!])],
+              }
+            : {
+                roleId: existing.roleId,
+                members: [],
+                invalidatedByFireWolf: true,
+                invalidatedPlayers: [...new Set([...(existing.invalidatedPlayers ?? []), action.fireWolfTarget!])],
+              };
+        });
+      }
+    }
+
     const magicSwap = getMagicSwap(updated);
     set({ nightActions: updated });
 
@@ -743,17 +918,29 @@ export const useGameStore = create<GameState>((set, get) => ({
     }
 
     if (action.roleId === 'slave_trader' && action.slaveTarget !== undefined) {
-      const targetRole = findSingleRoleForPlayer(action.slaveTarget, get().roleMembersMap);
+      const targetRole = getFireWolfEffectiveRole(
+        action.slaveTarget,
+        findSingleRoleForPlayer(action.slaveTarget, get().roleMembersMap),
+        gameMode,
+        upperDeadPlayers,
+        get().fireWolfBurnRecords,
+      );
       if (isVillagerLikeRoleId(targetRole)) {
         set(state => ({ slaveTraderSlaves: [...new Set([...state.slaveTraderSlaves, action.slaveTarget!])] }));
       }
     }
 
     if (action.roleId === 'fire_wolf' && action.fireWolfTarget !== undefined) {
-      const { gameMode, upperDeadPlayers, playerCardMap, roleMembersMap } = get();
+      const { gameMode, upperDeadPlayers, playerCardMap, roleMembersMap, currentNight, currentStep } = get();
       if (gameMode === 'dual') {
         const slot = upperDeadPlayers.includes(action.fireWolfTarget) ? 'lower' : 'upper';
-        const targetRole = playerCardMap[action.fireWolfTarget]?.[slot];
+        const targetRole = getFireWolfEffectiveRole(
+          action.fireWolfTarget,
+          playerCardMap[action.fireWolfTarget]?.[slot],
+          gameMode,
+          upperDeadPlayers,
+          get().fireWolfBurnRecords,
+        );
         set(state => ({
           fireWolfBurnedCards: isGodRoleId(targetRole)
             ? [
@@ -761,19 +948,110 @@ export const useGameStore = create<GameState>((set, get) => ({
                 { player: action.fireWolfTarget!, slot },
               ]
             : state.fireWolfBurnedCards,
+          fireWolfBurnRecords: isGodRoleId(targetRole) && targetRole
+            ? [
+                ...state.fireWolfBurnRecords.filter(record => !(record.player === action.fireWolfTarget && record.slot === slot)),
+                { player: action.fireWolfTarget!, slot, originalRoleId: targetRole, night: currentNight, step: currentStep },
+              ]
+            : state.fireWolfBurnRecords,
+          bishopHolder: isGodRoleId(targetRole) && state.bishopHolder === action.fireWolfTarget
+            ? null
+            : state.bishopHolder,
           fireWolfUsed: true,
         }));
       } else {
-        const targetRole = findSingleRoleForPlayer(action.fireWolfTarget, roleMembersMap);
+        const targetRole = getFireWolfEffectiveRole(
+          action.fireWolfTarget,
+          findSingleRoleForPlayer(action.fireWolfTarget, roleMembersMap),
+          gameMode,
+          upperDeadPlayers,
+          get().fireWolfBurnRecords,
+        );
         if (isGodRoleId(targetRole)) {
           set(state => ({
             fireWolfBurnedPlayers: [...new Set([...state.fireWolfBurnedPlayers, action.fireWolfTarget!])],
+            fireWolfBurnRecords: [
+              ...state.fireWolfBurnRecords.filter(record => !(record.player === action.fireWolfTarget && record.slot === 'single')),
+              { player: action.fireWolfTarget!, slot: 'single', originalRoleId: targetRole!, night: currentNight, step: currentStep },
+            ],
+            bishopHolder: state.bishopHolder === action.fireWolfTarget ? null : state.bishopHolder,
             fireWolfUsed: true,
           }));
         } else {
           set({ fireWolfUsed: true });
         }
       }
+    }
+
+    if (invalidatedAction) {
+      const actionGroups = [
+        ...nightHistory.map(record => record.actions),
+        updated,
+      ];
+      const actionTimeline = [
+        ...nightHistory.flatMap(record => record.actions.map((existing, step) => ({
+          existing,
+          night: record.nightNumber,
+          step,
+        }))),
+        ...updated.map((existing, step) => ({ existing, night: currentNight, step })),
+      ];
+      const allEffectiveActions = actionTimeline.map(entry => entry.existing);
+      const rebuiltCheckedPlayers: Record<number, 'wolf' | 'good'> = {};
+      for (const existing of allEffectiveActions) {
+        if (existing.roleId === 'seer' && existing.checkTarget !== undefined && existing.checkResult) {
+          rebuiltCheckedPlayers[existing.checkTarget] = existing.checkResult;
+        }
+      }
+
+      let rebuiltCupidLovers: [number, number] | null = null;
+      for (const group of actionGroups) {
+        const cupidAction = group.find(existing => existing.roleId === 'cupid' && existing.linkTargets?.length === 2);
+        if (cupidAction?.linkTargets) {
+          rebuiltCupidLovers = applyMagicSwapTargets(
+            cupidAction.linkTargets,
+            getMagicSwap(group),
+          ) as [number, number];
+        }
+      }
+
+      const rebuiltAnubisPlayers = uniqueNums(actionGroups.flatMap(group => {
+        const groupMagicSwap = getMagicSwap(group);
+        return group
+          .filter(existing => existing.roleId === 'anubis' && existing.anubisTargets?.length === 2)
+          .flatMap(existing => applyMagicSwapTargets(existing.anubisTargets, groupMagicSwap) ?? []);
+      }));
+      const rebuiltMummySeals = [...new Set(allEffectiveActions
+        .filter(existing => existing.roleId === 'mummy' && existing.mummySealedRole)
+        .map(existing => existing.mummySealedRole!))];
+      const rebuiltSlaves = uniqueNums(actionTimeline
+        .filter(({ existing }) => existing.roleId === 'slave_trader' && existing.slaveTarget !== undefined)
+        .filter(({ existing, night, step }) => {
+          const player = existing.slaveTarget!;
+          const burnRecordsAtAction = get().fireWolfBurnRecords.filter(record =>
+            record.night < night || (record.night === night && record.step < step)
+          );
+          const targetRole = getFireWolfEffectiveRole(
+            player,
+            findSingleRoleForPlayer(player, roleMembersMap),
+            gameMode,
+            upperDeadPlayers,
+            burnRecordsAtAction,
+          );
+          return isVillagerLikeRoleId(targetRole);
+        })
+        .map(({ existing }) => existing.slaveTarget!));
+
+      set(state => ({
+        saveUsed: allEffectiveActions.some(existing => existing.roleId === 'witch' && existing.saveTarget !== undefined),
+        poisonUsed: allEffectiveActions.some(existing => existing.roleId === 'witch' && existing.poisonTarget !== undefined),
+        checkedPlayers: rebuiltCheckedPlayers,
+        cupidLovers: rebuiltCupidLovers,
+        anubisScaledPlayers: rebuiltAnubisPlayers,
+        anubisScaledCards: state.anubisScaledCards.filter(card => rebuiltAnubisPlayers.includes(card.player)),
+        mummySealedRoles: rebuiltMummySeals,
+        slaveTraderSlaves: rebuiltSlaves,
+      }));
     }
 
     if (action.roleId === 'spirit_wolf' && action.spiritWolfSaveTarget !== undefined) {
@@ -785,7 +1063,14 @@ export const useGameStore = create<GameState>((set, get) => ({
     }
 
     if (action.roleId === 'spirit_wolf' && action.spiritWolfMimicTarget !== undefined && get().spiritWolfMimic === null) {
-      const targetRole = findSingleRoleForPlayer(action.spiritWolfMimicTarget, get().roleMembersMap) ?? 'villager';
+      const targetRole = getActiveRoleAtPhaseStart(
+        action.spiritWolfMimicTarget,
+        gameMode,
+        get().roleMembersMap,
+        playerCardMap,
+        upperDeadPlayers,
+        get().fireWolfBurnRecords,
+      ) ?? 'villager';
       set(state => ({
         spiritWolfMimic: {
           target: action.spiritWolfMimicTarget!,
@@ -837,6 +1122,21 @@ export const useGameStore = create<GameState>((set, get) => ({
         dayStepSnapshots: nextSnapshots,
       };
     });
+  },
+
+  restoreDayCommitSnapshot: () => {
+    const { dayCommitSnapshot: snapshot, dayCommitRestoreVersion } = get();
+    if (!snapshot) return false;
+    set({
+      ...restoreGameUndoSnapshot(snapshot.state),
+      currentNight: snapshot.currentNight,
+      currentStep: snapshot.currentStep,
+      nightStepSnapshots: cloneUndoSnapshots(snapshot.nightStepSnapshots),
+      dayStepSnapshots: cloneUndoSnapshots(snapshot.dayStepSnapshots),
+      dayCommitSnapshot: null,
+      dayCommitRestoreVersion: dayCommitRestoreVersion + 1,
+    });
+    return true;
   },
 
   nextStep: () => {
@@ -902,7 +1202,7 @@ export const useGameStore = create<GameState>((set, get) => ({
   },
 
   finishNight: () => {
-    const { nightActions: rawActions, currentNight, roleMembersMap, playerCardMap, upperDeadPlayers, deadPlayers, playerCount, nightHistory, cupidLovers, gameMode } = get();
+    const { nightActions: rawActions, currentNight, roleMembersMap, playerCardMap, upperDeadPlayers, deadPlayers, playerCount, nightHistory, cupidLovers, gameMode, fireWolfBurnRecords } = get();
     const existingRecord = [...nightHistory]
       .reverse()
       .find(record => record.nightNumber === currentNight);
@@ -927,7 +1227,7 @@ export const useGameStore = create<GameState>((set, get) => ({
     const resolvedAnubisTargets = anubisAction
       ? applyMagicSwapTargets(anubisAction.anubisTargets, finalMagicSwap) ?? []
       : [];
-    const summary = buildNightSummary(nightActions, roleMembersMap, playerCardMap, upperDeadPlayers, prevDreamwalkerTarget, resolvedCupidLovers, gameMode);
+    const summary = buildNightSummary(nightActions, roleMembersMap, playerCardMap, upperDeadPlayers, prevDreamwalkerTarget, resolvedCupidLovers, gameMode, fireWolfBurnRecords);
     const record: NightRecord = { nightNumber: currentNight, actions: nightActions, summary };
     set(state => ({
       nightHistory: [
@@ -959,10 +1259,10 @@ export const useGameStore = create<GameState>((set, get) => ({
     const {
       nightActions, deadPlayers, upperDeadPlayers, gameMode, roleMembersMap, playerCardMap,
       nightHistory, cupidLovers, slaveTraderSlaves, singleWinRule, selectedRoles,
-      goldenBabyPlayers, fireWolfBurnedPlayers, currentNight,
+      goldenBabyPlayers, fireWolfBurnedPlayers, fireWolfBurnRecords, currentNight,
     } = get();
     const prevDreamwalkerTarget = getPreviousDreamwalkerTarget(nightHistory, currentNight);
-    const newDeaths = computeNightDeaths(nightActions, roleMembersMap, playerCardMap, upperDeadPlayers, prevDreamwalkerTarget, cupidLovers, gameMode, true, slaveTraderSlaves);
+    const newDeaths = computeNightDeaths(nightActions, roleMembersMap, playerCardMap, upperDeadPlayers, prevDreamwalkerTarget, cupidLovers, gameMode, true, slaveTraderSlaves, fireWolfBurnRecords);
 
     if (gameMode === 'dual') {
       // 雙身分：第一次死亡 → upperDeadPlayers（上牌死，仍可點）
@@ -1001,6 +1301,7 @@ export const useGameStore = create<GameState>((set, get) => ({
         nightActions: [],
         nightStepSnapshots: {},
         dayStepSnapshots: {},
+        dayCommitSnapshot: null,
         deadPlayers: nextDead,
         upperDeadPlayers: nextUpperDead,
         winResult,
@@ -1025,6 +1326,7 @@ export const useGameStore = create<GameState>((set, get) => ({
         nightActions: [],
         nightStepSnapshots: {},
         dayStepSnapshots: {},
+        dayCommitSnapshot: null,
         deadPlayers: allDead,
         winResult,
       }));
@@ -1038,6 +1340,8 @@ export const useGameStore = create<GameState>((set, get) => ({
     nightHistory: [],
     nightStepSnapshots: {},
     dayStepSnapshots: {},
+    dayCommitSnapshot: null,
+    dayCommitRestoreVersion: 0,
     saveUsed: false,
     poisonUsed: false,
     sharpshooterUsed: false,
@@ -1059,6 +1363,7 @@ export const useGameStore = create<GameState>((set, get) => ({
     slaveTraderSlaves: [],
     fireWolfBurnedPlayers: [],
     fireWolfBurnedCards: [],
+    fireWolfBurnRecords: [],
     fireWolfUsed: false,
     spiritWolfMimic: null,
     spiritWolfSaveUsed: false,
@@ -1084,6 +1389,8 @@ export const useGameStore = create<GameState>((set, get) => ({
       nightHistory: [],
       nightStepSnapshots: {},
       dayStepSnapshots: {},
+      dayCommitSnapshot: null,
+      dayCommitRestoreVersion: 0,
       saveUsed: false,
       poisonUsed: false,
       sharpshooterUsed: false,
@@ -1105,6 +1412,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       slaveTraderSlaves: [],
       fireWolfBurnedPlayers: [],
       fireWolfBurnedCards: [],
+      fireWolfBurnRecords: [],
       fireWolfUsed: false,
       spiritWolfMimic: null,
       spiritWolfSaveUsed: false,
@@ -1128,15 +1436,16 @@ export const useGameStore = create<GameState>((set, get) => ({
   setMonkVoteCard: (card) => set({ monkVoteCard: card }),
 
   endDay: ({ exiledPlayer, isIdiotFlip = false, nightChainDeaths, dayKills = [] }) => {
+    const dayCommitSnapshot = createPhaseTransitionSnapshot(get());
     const {
       nightActions, deadPlayers, upperDeadPlayers, gameMode,
       lostVotePlayers, idiotFlippedPlayers, roleMembersMap, playerCardMap,
       nightHistory, cupidLovers, sharpshooterUsed, slaveTraderSlaves,
-      singleWinRule, selectedRoles, goldenBabyPlayers, fireWolfBurnedPlayers,
+      singleWinRule, selectedRoles, goldenBabyPlayers, fireWolfBurnedPlayers, fireWolfBurnRecords,
       currentNight,
     } = get();
     const prevDreamwalkerTarget = getPreviousDreamwalkerTarget(nightHistory, currentNight);
-    const computedNightDeaths = computeNightDeaths(nightActions, roleMembersMap, playerCardMap, upperDeadPlayers, prevDreamwalkerTarget, cupidLovers, gameMode, true, slaveTraderSlaves);
+    const computedNightDeaths = computeNightDeaths(nightActions, roleMembersMap, playerCardMap, upperDeadPlayers, prevDreamwalkerTarget, cupidLovers, gameMode, true, slaveTraderSlaves, fireWolfBurnRecords);
     const nightDeaths = [...new Set(nightChainDeaths ?? computedNightDeaths)];
 
     const directDayDeaths = [
@@ -1158,6 +1467,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       cupidLovers,
       gameMode,
       gameMode === 'single' ? nightDeaths : [],
+      fireWolfBurnRecords,
     ).flat();
     const allNewDeaths = [
       ...nightDeaths,
@@ -1195,7 +1505,14 @@ export const useGameStore = create<GameState>((set, get) => ({
         }
       : null;
     const lastDayExiledRoleId = exiledPlayer !== undefined && !isIdiotFlip
-      ? findSingleRoleForPlayer(exiledPlayer, roleMembersMap) ?? null
+      ? getActiveRoleAtPhaseStart(
+          exiledPlayer,
+          gameMode,
+          roleMembersMap,
+          playerCardMap,
+          dayPhaseUpperDeadPlayers,
+          fireWolfBurnRecords,
+        ) ?? null
       : null;
 
     if (gameMode === 'dual') {
@@ -1231,6 +1548,7 @@ export const useGameStore = create<GameState>((set, get) => ({
         nightActions: [],
         nightStepSnapshots: {},
         dayStepSnapshots: {},
+        dayCommitSnapshot,
         sharpshooterUsed: newSharpshooterUsed,
         deadPlayers: nextDead,
         upperDeadPlayers: nextUpperDead,
@@ -1260,6 +1578,7 @@ export const useGameStore = create<GameState>((set, get) => ({
         nightActions: [],
         nightStepSnapshots: {},
         dayStepSnapshots: {},
+        dayCommitSnapshot,
         sharpshooterUsed: newSharpshooterUsed,
         deadPlayers: allDead,
         lostVotePlayers: newLostVote,
@@ -1459,17 +1778,15 @@ export function getGravediggerLowerInfo(
   lastDayExileInfo: { player: number; upperWasAlive: boolean } | null,
   playerCardMap: Record<number, { upper?: string; lower?: string }> = {},
   deadPlayers: number[] = [],
-): { player: number; isWolf: boolean; roleName: string } | null {
+): { player: number; isWolf: boolean } | null {
   if (!lastDayExileInfo?.upperWasAlive) return null;
   const player = lastDayExileInfo.player;
   if (deadPlayers.includes(player)) return null;
   const lowerRoleId = playerCardMap[player]?.lower;
-  if (!lowerRoleId) return null;
-  const lowerRole = ROLES.find(r => r.id === lowerRoleId);
+  if (!lowerRoleId) return { player, isWolf: false };
   return {
     player,
-    isWolf: lowerRole?.team === 'wolf' || lowerRoleId === 'wild_child',
-    roleName: lowerRole?.name ?? lowerRoleId,
+    isWolf: ROLES.find(r => r.id === lowerRoleId)?.team === 'wolf' || lowerRoleId === 'wild_child',
   };
 }
 
@@ -1623,13 +1940,17 @@ export function getActiveRoleAtPhaseStart(
   roleMembersMap: Record<string, number[]> = {},
   playerCardMap: Record<number, { upper?: string; lower?: string }> = {},
   upperDeadPlayers: number[] = [],
+  fireWolfBurnRecords: FireWolfBurnRecord[] = [],
 ): string | undefined {
+  let originalRoleId: string | undefined;
   if (gameMode === 'dual') {
     const cards = playerCardMap[player];
-    return upperDeadPlayers.includes(player) ? cards?.lower : cards?.upper;
+    originalRoleId = upperDeadPlayers.includes(player) ? cards?.lower : cards?.upper;
+  } else {
+    originalRoleId = Object.entries(roleMembersMap)
+      .find(([, members]) => (members ?? []).includes(player))?.[0];
   }
-  return Object.entries(roleMembersMap)
-    .find(([, members]) => (members ?? []).includes(player))?.[0];
+  return getFireWolfEffectiveRole(player, originalRoleId, gameMode, upperDeadPlayers, fireWolfBurnRecords);
 }
 
 function isNightSkillImmune(
@@ -1640,6 +1961,7 @@ function isNightSkillImmune(
   upperDeadPlayers: number[],
   prevDreamwalkerTarget: number | undefined,
   gameMode: GameMode,
+  fireWolfBurnRecords: FireWolfBurnRecord[] = [],
 ): boolean {
   const currentDreamwalkerTarget = getEffectiveDreamwalkerTarget(actions);
   const isConsecutiveDreamwalk =
@@ -1653,6 +1975,7 @@ function isNightSkillImmune(
     roleMembersMap,
     playerCardMap,
     upperDeadPlayers,
+    fireWolfBurnRecords,
   ) === 'frankenstein';
 }
 
@@ -1665,6 +1988,7 @@ export function resolveTimedDeathSkillTarget(
   upperDeadPlayers: number[] = [],
   prevDreamwalkerTarget?: number,
   gameMode: GameMode = 'single',
+  fireWolfBurnRecords: FireWolfBurnRecord[] = [],
 ): number | undefined {
   const effectiveTarget = timing === 'night'
     ? applyMagicSwapTarget(selectedTarget, getMagicSwap(actions))
@@ -1680,6 +2004,7 @@ export function resolveTimedDeathSkillTarget(
       upperDeadPlayers,
       prevDreamwalkerTarget,
       gameMode,
+      fireWolfBurnRecords,
     )
   ) {
     return undefined;
@@ -1699,6 +2024,7 @@ export function resolveAutomaticDeathRounds(
   cupidLovers?: [number, number] | null,
   gameMode: GameMode = 'single',
   existingChainDeaths: number[] = [],
+  fireWolfBurnRecords: FireWolfBurnRecord[] = [],
 ): number[][] {
   const seen = new Set([...deadPlayers, ...existingChainDeaths]);
   const firstRound = [...new Set(initialDeaths)].filter(player => !seen.has(player));
@@ -1720,6 +2046,7 @@ export function resolveAutomaticDeathRounds(
         roleMembersMap,
         playerCardMap,
         upperDeadPlayers,
+        fireWolfBurnRecords,
       );
       if (
         activeRole === 'dreamwalker' &&
@@ -1749,6 +2076,7 @@ export function resolveAutomaticDeathRounds(
               upperDeadPlayers,
               prevDreamwalkerTarget,
               gameMode,
+              fireWolfBurnRecords,
             )
           )
         ) {
@@ -1771,6 +2099,7 @@ export function getDeathSkillTriggers(
   playerCardMap: Record<number, { upper?: string; lower?: string }> = {},
   upperDeadPlayers: number[] = [],
   gameMode: GameMode = 'single',
+  fireWolfBurnRecords: FireWolfBurnRecord[] = [],
 ): DeathSkillTrigger[] {
   const magicSwap = getMagicSwap(actions);
   const poisonTargets = timing === 'night'
@@ -1788,6 +2117,7 @@ export function getDeathSkillTriggers(
       roleMembersMap,
       playerCardMap,
       upperDeadPlayers,
+      fireWolfBurnRecords,
     );
     const sealedByMummy = timing === 'night' && hasActiveMummySeal(
       actions,
@@ -1813,6 +2143,7 @@ export function getNightDeathAbilityStatus(
   prevDreamwalkerTarget?: number,
   cupidLovers?: [number, number] | null,
   gameMode?: GameMode,
+  fireWolfBurnRecords: FireWolfBurnRecord[] = [],
 ): NightDeathAbilityStatus {
   const deaths = computeNightDeaths(
     actions,
@@ -1822,6 +2153,9 @@ export function getNightDeathAbilityStatus(
     prevDreamwalkerTarget,
     cupidLovers,
     gameMode,
+    true,
+    [],
+    fireWolfBurnRecords,
   );
   const magicSwap = getMagicSwap(actions);
   const effectivePoisonTargets = new Set(actions
@@ -1829,7 +2163,14 @@ export function getNightDeathAbilityStatus(
     .map(target => applyMagicSwapTarget(target, magicSwap))
     .filter((target): target is number => target !== undefined));
   const isPoisonDeath = deaths.includes(player) && effectivePoisonTargets.has(player);
-  const activeRole = getActiveRoleAtPhaseStart(player, gameMode ?? 'single', roleMembersMap, playerCardMap, upperDeadPlayers);
+  const activeRole = getActiveRoleAtPhaseStart(
+    player,
+    gameMode ?? 'single',
+    roleMembersMap,
+    playerCardMap,
+    upperDeadPlayers,
+    fireWolfBurnRecords,
+  );
   const sealedByMummy = hasActiveMummySeal(
     actions,
     activeRole,
@@ -1849,18 +2190,23 @@ export function resolveDreamwalkerCarryDeaths(
   playerCardMap: Record<number, { upper?: string; lower?: string }> = {},
   upperDeadPlayers: number[] = [],
   pendingUpperDeaths: number[] = [],
+  gameMode: GameMode = Object.keys(playerCardMap).length > 0 ? 'dual' : 'single',
+  fireWolfBurnRecords: FireWolfBurnRecord[] = [],
 ): number[] {
   const deaths = new Set(initialDeaths);
   const dreamwalkerTarget = getEffectiveDreamwalkerTarget(actions);
   if (dreamwalkerTarget === undefined) return [...deaths];
 
   const isActiveDreamwalker = (player: number) => {
-    const cards = playerCardMap[player];
-    if (cards) {
-      const upperIsDead = upperDeadPlayers.includes(player) || pendingUpperDeaths.includes(player);
-      return (upperIsDead ? cards.lower : cards.upper) === 'dreamwalker';
-    }
-    return (roleMembersMap['dreamwalker'] ?? []).includes(player);
+    const projectedUpperDeaths = [...upperDeadPlayers, ...pendingUpperDeaths];
+    return getActiveRoleAtPhaseStart(
+      player,
+      gameMode,
+      roleMembersMap,
+      playerCardMap,
+      projectedUpperDeaths,
+      fireWolfBurnRecords,
+    ) === 'dreamwalker';
   };
 
   if ([...deaths].some(isActiveDreamwalker)) deaths.add(dreamwalkerTarget);
@@ -1877,6 +2223,7 @@ export function computeNightDeaths(
   gameMode?: 'single' | 'dual',
   includeAutomaticEffects = true,
   slaveTraderSlaves: number[] = [],
+  fireWolfBurnRecords: FireWolfBurnRecord[] = [],
 ): number[] {
   let wolfKill: number | undefined;
   let guardProtect: number | undefined;
@@ -1915,8 +2262,6 @@ export function computeNightDeaths(
   ].filter((target): target is number => target !== undefined);
 
   // 科學怪人：免疫夜間所有傷害
-  const frankensteinMembers = new Set(roleMembersMap['frankenstein'] ?? []);
-
   // 攝夢人連續守護同一人 → 保護失效且目標死亡
   const consecutiveDreamwalk =
     prevDreamwalkerTarget !== undefined &&
@@ -1926,7 +2271,14 @@ export function computeNightDeaths(
   // 攝夢人保護（非連續）或科學怪人本體 → 免疫一切
   const isPassiveShielded = (p: number) => {
     if (p === dreamwalkerProtect && !consecutiveDreamwalk) return true;
-    if (frankensteinMembers.has(p)) return true;
+    if (getActiveRoleAtPhaseStart(
+      p,
+      gameMode ?? 'single',
+      roleMembersMap,
+      playerCardMap,
+      upperDeadPlayers,
+      fireWolfBurnRecords,
+    ) === 'frankenstein') return true;
     return false;
   };
   const isShielded = (p: number) => {
@@ -1949,16 +2301,28 @@ export function computeNightDeaths(
 
   // 從 playerCardMap 取得玩家當前活躍的角色（上牌存活→上牌，上牌死→下牌）
   const getActiveCardRoleId = (p: number): string | undefined => {
-    const cards = playerCardMap[p];
-    if (!cards) return undefined;
-    return upperDeadPlayers.includes(p) ? cards.lower : cards.upper;
+    return getActiveRoleAtPhaseStart(
+      p,
+      gameMode ?? 'single',
+      roleMembersMap,
+      playerCardMap,
+      upperDeadPlayers,
+      fireWolfBurnRecords,
+    );
   };
   const isActiveDreamwalker = (p: number) => {
     const cards = playerCardMap[p];
     const activeRole = getActiveCardRoleId(p);
     if (cards) return activeRole === 'dreamwalker';
     if (activeRole !== undefined) return activeRole === 'dreamwalker';
-    return (roleMembersMap['dreamwalker'] ?? []).includes(p);
+    return getActiveRoleAtPhaseStart(
+      p,
+      gameMode ?? 'single',
+      roleMembersMap,
+      playerCardMap,
+      upperDeadPlayers,
+      fireWolfBurnRecords,
+    ) === 'dreamwalker';
   };
 
   // 優先以 active card 判斷；playerCardMap 有記錄時不 fallback roleMembersMap
@@ -1968,7 +2332,8 @@ export function computeNightDeaths(
       const activeRole = getActiveCardRoleId(p);
       return activeRole !== undefined && wolfTeamIds.has(activeRole);
     }
-    return getPlayerRoleIds(p).some(rid => wolfTeamIds.has(rid));
+    const activeRole = getActiveCardRoleId(p);
+    return activeRole !== undefined && wolfTeamIds.has(activeRole);
   };
   const isVillageNightRole = (p: number) => {
     const cards = playerCardMap[p];
@@ -1976,7 +2341,8 @@ export function computeNightDeaths(
       const activeRole = getActiveCardRoleId(p);
       return activeRole !== undefined && villageNightIds.has(activeRole);
     }
-    return getPlayerRoleIds(p).some(rid => villageNightIds.has(rid));
+    const activeRole = getActiveCardRoleId(p);
+    return activeRole !== undefined && villageNightIds.has(activeRole);
   };
 
   const deaths = new Set<number>();
@@ -2004,7 +2370,14 @@ export function computeNightDeaths(
     const activeRole = getActiveCardRoleId(p);
     if (cards) return activeRole === 'witch_hunter';
     if (activeRole !== undefined) return activeRole === 'witch_hunter';
-    return (roleMembersMap['witch_hunter'] ?? []).includes(p);
+    return getActiveRoleAtPhaseStart(
+      p,
+      gameMode ?? 'single',
+      roleMembersMap,
+      playerCardMap,
+      upperDeadPlayers,
+      fireWolfBurnRecords,
+    ) === 'witch_hunter';
   };
   for (const poisonTarget of poisonTargets) {
     if (!isPassiveShielded(poisonTarget) && !isActiveWitchHunter(poisonTarget)) deaths.add(poisonTarget);
@@ -2042,9 +2415,9 @@ export function computeNightDeaths(
       else if (!w1 && w2 && !isShielded(t1)) deaths.add(t1);
     }
 
-    // 天狗雙刀視為狼刀：守衛可擋兩刀；女巫只可救第一刀。
+    // 天狗刀視為狼刀。
     if (a.roleId === 'tengu' && a.tenguKillTargets) {
-      const targets = applyMagicSwapTargets(a.tenguKillTargets, magicSwap) ?? [];
+      const targets = (applyMagicSwapTargets(a.tenguKillTargets, magicSwap) ?? []).slice(0, 1);
       targets.forEach(target => addKnife(target));
     }
 
@@ -2069,13 +2442,29 @@ export function computeNightDeaths(
         : roleMembersMap['monk'] ?? [];
       const monkActive = monkPlayers.some(player =>
         !deaths.has(player) &&
-        getActiveRoleAtPhaseStart(player, gameMode ?? 'single', roleMembersMap, playerCardMap, upperDeadPlayers) === 'monk'
+        getActiveRoleAtPhaseStart(
+          player,
+          gameMode ?? 'single',
+          roleMembersMap,
+          playerCardMap,
+          upperDeadPlayers,
+          fireWolfBurnRecords,
+        ) === 'monk'
       );
-      if (a.blindSwordsmanMode === 'kill' && monkActive) {
-        a.members.forEach(player => deaths.add(player));
-      } else if (a.blindSwordsmanTarget !== undefined) {
-      const t = applyMagicSwapTarget(a.blindSwordsmanTarget, magicSwap)!;
-      deaths.add(t);
+      if (a.blindSwordsmanMode === 'kill') {
+        if (monkActive) {
+          a.members.forEach(player => deaths.add(player));
+        } else if (a.blindSwordsmanTarget !== undefined) {
+          const t = applyMagicSwapTarget(a.blindSwordsmanTarget, magicSwap)!;
+          if (!isPassiveShielded(t)) deaths.add(t);
+        }
+      } else if (
+        a.blindSwordsmanMode === 'monk_vote' &&
+        monkActive &&
+        a.blindSwordsmanTarget !== undefined
+      ) {
+        const t = applyMagicSwapTarget(a.blindSwordsmanTarget, magicSwap)!;
+        if (!isPassiveShielded(t)) deaths.add(t);
       }
     }
 
@@ -2130,7 +2519,17 @@ export function computeNightDeaths(
   }
 
   const resolvedDeaths = [...deaths];
-  const slaveTrader = roleMembersMap['slave_trader']?.find(p => resolvedDeaths.includes(p));
+  const slaveTrader = roleMembersMap['slave_trader']?.find(p =>
+    resolvedDeaths.includes(p) &&
+    getActiveRoleAtPhaseStart(
+      p,
+      gameMode ?? 'single',
+      roleMembersMap,
+      playerCardMap,
+      upperDeadPlayers,
+      fireWolfBurnRecords,
+    ) === 'slave_trader'
+  );
   if (slaveTrader !== undefined) {
     const substitute = slaveTraderSlaves.find(p => p !== slaveTrader && !resolvedDeaths.includes(p));
     if (substitute !== undefined) {
@@ -2188,7 +2587,7 @@ export function computeBearTamerResult(
   return 'silent';
 }
 
-function buildNightSummary(
+export function buildNightSummary(
   actions: NightAction[],
   roleMembersMap: Record<string, number[]> = {},
   playerCardMap: Record<number, { upper?: string; lower?: string }> = {},
@@ -2196,6 +2595,7 @@ function buildNightSummary(
   prevDreamwalkerTarget?: number,
   cupidLovers?: [number, number] | null,
   gameMode?: 'single' | 'dual',
+  fireWolfBurnRecords: FireWolfBurnRecord[] = [],
 ): string[] {
   const lines: string[] = [];
   let wolfKill: number | undefined;
@@ -2221,6 +2621,13 @@ function buildNightSummary(
     const role = ROLES.find(r => r.id === a.roleId);
     if (!role) continue;
     const who = a.members.length ? `（${a.members.join('、')}號）` : '';
+    if (a.invalidatedByFireWolf) {
+      const invalidated = a.invalidatedPlayers?.length
+        ? `（${a.invalidatedPlayers.join('、')}號）`
+        : '';
+      lines.push(`🔥 ${role.name}${invalidated} → 被火狼燒成民，本晚技能失效`);
+      if (a.members.length === 0) continue;
+    }
     switch (a.roleId) {
       case 'werewolf':
         lines.push(`${role.emoji} ${role.name}${who} → ${a.killTarget ? `攻擊 ${fmt(a.killTarget)}` : '未達成攻擊'}`);
@@ -2291,6 +2698,60 @@ function buildNightSummary(
       case 'bear_tamer':
         lines.push(`${role.emoji} ${role.name}${who} → 熊${a.bearTamerResult === 'growl' ? '叫了 🐻' : '沒有叫'}`);
         break;
+      case 'spirit_wolf': {
+        const actionsTaken: string[] = [];
+        if (a.spiritWolfMimicTarget !== undefined) actionsTaken.push(`模仿 ${fmt(a.spiritWolfMimicTarget)}`);
+        if (a.spiritWolfKillTarget !== undefined) actionsTaken.push(`擊殺 ${fmt(a.spiritWolfKillTarget)}`);
+        if (a.spiritWolfCheckTarget !== undefined) {
+          const checkedRole = ROLES.find(item => item.id === a.spiritWolfCheckRole)?.name ?? '未知角色';
+          actionsTaken.push(`查驗 ${fmt(a.spiritWolfCheckTarget)}：${checkedRole}`);
+        }
+        if (a.spiritWolfSaveTarget !== undefined) actionsTaken.push(`解藥救 ${fmt(a.spiritWolfSaveTarget)}`);
+        if (a.spiritWolfPoisonTarget !== undefined) actionsTaken.push(`毒藥毒 ${fmt(a.spiritWolfPoisonTarget)}`);
+        lines.push(`${role.emoji} ${role.name}${who} → ${actionsTaken.join('；') || '未發動技能'}`);
+        break;
+      }
+      case 'shaman':
+        lines.push(`${role.emoji} ${role.name}${who} → ${
+          a.shamanTarget === undefined || a.shamanMode === 'none'
+            ? '未發動'
+            : `${a.shamanMode === 'knife' ? '薩滿刀' : '薩滿盾'}指定 ${fmt(a.shamanTarget)}`
+        }`);
+        break;
+      case 'slave_trader':
+        lines.push(`${role.emoji} ${role.name}${who} → ${a.slaveTarget !== undefined ? `奴役 ${fmt(a.slaveTarget)}` : '未奴役'}`);
+        break;
+      case 'fire_wolf': {
+        const actionsTaken: string[] = [];
+        if (a.fireWolfTarget !== undefined) actionsTaken.push(`燒成平民 ${fmt(a.fireWolfTarget)}`);
+        if (a.fireWolfKillTarget !== undefined) actionsTaken.push(`代替狼刀攻擊 ${fmt(a.fireWolfKillTarget)}`);
+        lines.push(`${role.emoji} ${role.name}${who} → ${actionsTaken.join('；') || '未發動技能'}`);
+        break;
+      }
+      case 'blind_swordsman':
+        if (a.blindSwordsmanMode === 'monk_vote') {
+          lines.push(`${role.emoji} ${role.name}${who} → ${
+            a.blindSwordsmanTarget !== undefined
+              ? `依僧侶票嘗試擊殺 ${fmt(a.blindSwordsmanTarget)}`
+              : '依僧侶票發動（無有效目標）'
+          }`);
+        } else {
+          lines.push(`${role.emoji} ${role.name}${who} → ${a.blindSwordsmanTarget !== undefined ? `自行擊殺 ${fmt(a.blindSwordsmanTarget)}` : '未發動技能'}`);
+        }
+        break;
+      case 'explorer':
+        lines.push(`${role.emoji} ${role.name}${who} → 最近的狼：${typeof a.explorerResult === 'number' ? fmt(a.explorerResult) : '未知'}`);
+        break;
+      case 'mummy':
+        lines.push(`${role.emoji} ${role.name}${who} → ${
+          a.mummySealedRole
+            ? `封印 ${ROLES.find(item => item.id === a.mummySealedRole)?.name ?? a.mummySealedRole}`
+            : '未封印'
+        }`);
+        break;
+      case 'gravedigger':
+        lines.push(`${role.emoji} ${role.name}${who} → 查看前日放逐牌的下牌陣營`);
+        break;
       default:
         lines.push(`${role.emoji} ${role.name}${who} → 無行動`);
     }
@@ -2314,7 +2775,18 @@ function buildNightSummary(
   if (poisonedByGuardSave) lines.push(`（${fmt(wolfKill!)} 守衛＋解藥同時作用，解藥視為毒藥，仍死亡）`);
 
   // 完整死亡列表（使用 computeNightDeaths 確保石像鬼、天狗等全部算入）
-  const allDeaths = computeNightDeaths(actions, roleMembersMap, playerCardMap, upperDeadPlayers, prevDreamwalkerTarget, cupidLovers, gameMode);
+  const allDeaths = computeNightDeaths(
+    actions,
+    roleMembersMap,
+    playerCardMap,
+    upperDeadPlayers,
+    prevDreamwalkerTarget,
+    cupidLovers,
+    gameMode,
+    true,
+    [],
+    fireWolfBurnRecords,
+  );
   const bloodMoonOn = actions.some(a => a.roleId === 'blood_moon' && a.bloodMoonActivated);
   const summaryDeaths = bloodMoonOn ? [] : allDeaths;
 

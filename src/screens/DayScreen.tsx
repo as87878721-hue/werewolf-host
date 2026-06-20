@@ -40,9 +40,11 @@ export default function DayScreen() {
     gameMode, playerCount, currentNight, selectedRoles, nightOrder,
     nightActions, nightHistory, deadPlayers, upperDeadPlayers, playerCardMap, roleMembersMap,
     singleWinRule, winResult,
+    dayCommitRestoreVersion,
     sheriffPlayer, lostVotePlayers, idiotFlippedPlayers,
-    cupidLovers, bishopHolder, knightUsed, goldenBabyPlayers, monkVoteTarget, slaveTraderSlaves, fireWolfBurnedPlayers,
-    setSheriff, endDay, setBishopHolder, setKnightUsed, setRoleMembers, setPlayerCardRole, setNightStep, resetGameProgress,
+    cupidLovers, bishopHolder, knightUsed, goldenBabyPlayers, monkVoteTarget, slaveTraderSlaves,
+    fireWolfBurnedPlayers, fireWolfBurnedCards, fireWolfBurnRecords,
+    setSheriff, endDay, setBishopHolder, setKnightUsed, setRoleMembers, setPlayerCardRole, rewindNightStep, resetGameProgress,
     setMonkVoteTarget, setMonkVoteCard, captureDayStepSnapshot, restoreDayStepSnapshot,
   } = useGameStore();
 
@@ -67,6 +69,7 @@ export default function DayScreen() {
     gameMode,
     false,
     slaveTraderSlaves,
+    fireWolfBurnRecords,
   );
 
   // 血月：上一晚是否發動（延後夜晚資訊與夜晚死亡結算）
@@ -94,6 +97,8 @@ export default function DayScreen() {
     prevDreamwalkerTarget,
     cupidLovers,
     gameMode,
+    [],
+    fireWolfBurnRecords,
   );
   // 只要場上有血月且早上會宣布平安夜，票逐後就保留獨立的延後死訊階段。
   const delayedDeathAnnouncementRequired =
@@ -113,14 +118,19 @@ export default function DayScreen() {
     playerCardMap,
     upperDeadPlayers,
     gameMode,
+    fireWolfBurnRecords,
   ).find(trigger => !handledNightDeathSkills.includes(trigger.player));
   const nightChainComplete = pendingNightDeathSkill === undefined;
 
   const getDeathRole = (p: number): string | undefined => {
-    if (isDualMode) {
-      return upperDeadPlayers.includes(p) ? playerCardMap[p]?.lower : playerCardMap[p]?.upper;
-    }
-    return undefined;
+    return getActiveRoleAtPhaseStart(
+      p,
+      gameMode,
+      roleMembersMap,
+      playerCardMap,
+      upperDeadPlayers,
+      fireWolfBurnRecords,
+    );
   };
 
   const revealableRoles = selectedRoles
@@ -130,11 +140,17 @@ export default function DayScreen() {
 
   // 雙身分白天有效身分：上牌已死（含昨晚剛死）→ 下牌；否則 → 上牌
   const getActiveDayRole = (p: number): string | undefined => {
-    if (!isDualMode) return undefined;
     const upperIsDead =
       upperDeadPlayers.includes(p) ||
       (nightChainComplete && nightChainDeaths.includes(p));
-    return upperIsDead ? playerCardMap[p]?.lower : playerCardMap[p]?.upper;
+    return getActiveRoleAtPhaseStart(
+      p,
+      gameMode,
+      roleMembersMap,
+      playerCardMap,
+      upperIsDead ? [...new Set([...upperDeadPlayers, p])] : upperDeadPlayers,
+      fireWolfBurnRecords,
+    );
   };
 
   const sheriffDiedLastNight = sheriffPlayer !== null && nightChainDeaths.includes(sheriffPlayer);
@@ -195,6 +211,7 @@ export default function DayScreen() {
       setMonkVoteTarget(null);
       setMonkVoteCard(null);
       setDayDeathRounds([]);
+      setVoteDeathRoundStart(0);
       setHandledDayDeathSkills([]);
       setDayDeathSkillTarget(null);
     }
@@ -210,6 +227,7 @@ export default function DayScreen() {
       setWwBringTarget(null);
       setWwBringResolved(false);
       setDayDeathRounds([]);
+      setVoteDeathRoundStart(0);
       setHandledDayDeathSkills([]);
       setDayDeathSkillTarget(null);
       setSpeechBadgeAction(null);
@@ -271,6 +289,7 @@ export default function DayScreen() {
   const [wwBringTarget, setWwBringTarget] = useState<number | null>(null);
   const [wwBringResolved, setWwBringResolved] = useState(false);
   const [dayDeathRounds, setDayDeathRounds] = useState<number[][]>([]);
+  const [voteDeathRoundStart, setVoteDeathRoundStart] = useState(0);
   const [handledDayDeathSkills, setHandledDayDeathSkills] = useState<number[]>([]);
   const [dayDeathSkillTarget, setDayDeathSkillTarget] = useState<number | null>(null);
   // Badge when sheriff self-destructs
@@ -317,12 +336,34 @@ export default function DayScreen() {
   const [bmWolfKingResolved, setBmWolfKingResolved] = useState(false);
   const [announcedBloodMoonSkillRoundCount, setAnnouncedBloodMoonSkillRoundCount] = useState(0);
   const [dayResolvedWinResult, setDayResolvedWinResult] = useState<WinResult | null>(null);
+  const handledCommitRestoreVersion = useRef(dayCommitRestoreVersion);
 
   useEffect(() => {
     captureDayStepSnapshot(step);
   }, [captureDayStepSnapshot, step]);
 
+  useEffect(() => {
+    if (dayCommitRestoreVersion === handledCommitRestoreVersion.current) return;
+    handledCommitRestoreVersion.current = dayCommitRestoreVersion;
+    clearDayStepState(step);
+    if (step === 4) setStep(3);
+  }, [dayCommitRestoreVersion]);
+
   const handleBack = () => {
+    if (showNightSummary) {
+      setShowNightSummary(false);
+      return;
+    }
+    if (speechRevealPlayer !== null) {
+      setSpeechRevealPlayer(null);
+      return;
+    }
+
+    const returnToPreviousNight = () => {
+      rewindNightStep(Math.max(nightOrder.length - 1, 0));
+      if (navigation.canGoBack()) navigation.goBack();
+      else navigation.navigate('Night');
+    };
     const shouldClearNightDeathStep = hasNightDeathStepTransientState({
       nightDeathRounds,
       initialNightDeathRounds,
@@ -338,13 +379,11 @@ export default function DayScreen() {
     });
 
     if (step === 0) {
-      setNightStep(Math.max(nightOrder.length - 1, 0));
-      navigation.goBack();
+      returnToPreviousNight();
     } else if (step === 1 && shouldClearNightDeathStep) {
       clearDayStepState(1);
     } else if (step === 1 && !shouldShowSheriffStep) {
-      setNightStep(Math.max(nightOrder.length - 1, 0));
-      navigation.goBack();
+      returnToPreviousNight();
     } else if (
       step === 2 &&
       (
@@ -378,6 +417,7 @@ export default function DayScreen() {
     ...new Set([...upperDeadPlayers, ...nightChainDeaths]),
   ];
   const dayChainDeaths = [...new Set(dayDeathRounds.flat())];
+  const voteDeathRounds = dayDeathRounds.slice(voteDeathRoundStart);
   const needsResultDayDeathAnnouncement = step === 4;
   const resolveBloodMoonSkillTarget = (target: number | null) => target === null
     ? undefined
@@ -390,6 +430,7 @@ export default function DayScreen() {
         upperDeadPlayers,
         prevDreamwalkerTarget,
         gameMode,
+        fireWolfBurnRecords,
       );
   const resolvedBmHunterTarget = resolveBloodMoonSkillTarget(bmHunterTarget);
   const resolvedBmWolfKingTarget = resolveBloodMoonSkillTarget(bmWolfKingTarget);
@@ -408,7 +449,11 @@ export default function DayScreen() {
     playerCardMap,
     dayPhaseUpperDeadPlayers,
     gameMode,
-  ).find(trigger => !handledDayDeathSkills.includes(trigger.player));
+    fireWolfBurnRecords,
+  ).find(trigger =>
+    !handledDayDeathSkills.includes(trigger.player) &&
+    !(trigger.roleId === 'wolf_king' && speechDeaths.includes(trigger.player))
+  );
 
   const directDayDeaths = [...new Set([
     ...dayChainDeaths,
@@ -421,6 +466,8 @@ export default function DayScreen() {
     playerCardMap,
     upperDeadPlayers,
     nightChainDeaths,
+    gameMode,
+    fireWolfBurnRecords,
   );
   // 血月延後結算時，先排除白天已死亡者，再重新建立夜晚死訊。
   // 這可避免已在白天死亡的原始目標仍觸發殉情、夢遊者等夜晚連鎖。
@@ -437,6 +484,7 @@ export default function DayScreen() {
         cupidLovers,
         gameMode,
         resolvedDayDeaths,
+        fireWolfBurnRecords,
       )
     : [];
   const delayedNightDeaths = [...new Set(delayedNightDeathRounds.flat())];
@@ -453,6 +501,7 @@ export default function DayScreen() {
         cupidLovers,
         gameMode,
         [...resolvedDayDeaths, ...delayedNightDeaths],
+        fireWolfBurnRecords,
       )
     : [];
   const bmHunterDeaths = bmHunterDeathRounds.flat();
@@ -469,6 +518,7 @@ export default function DayScreen() {
         cupidLovers,
         gameMode,
         [...resolvedDayDeaths, ...delayedNightDeaths, ...bmHunterDeaths],
+        fireWolfBurnRecords,
       )
     : [];
   const bloodMoonSkillDeathRounds = [...bmHunterDeathRounds, ...bmWolfKingDeathRounds];
@@ -515,20 +565,13 @@ export default function DayScreen() {
 
   // ── Role detection helpers ─────────────────────────────────────────────
   const hasActiveRole = (p: number, roleId: string): boolean => {
-    if (isDualMode) return getActiveDayRole(p) === roleId;
-    return (roleMembersMap[roleId] ?? []).includes(p);
+    return getActiveDayRole(p) === roleId;
   };
 
   const isActiveWolf = (p: number): boolean => {
     const wolfTeamIds = new Set(ROLES.filter(r => r.team === 'wolf').map(r => r.id));
-    if (isDualMode) {
-      const active = getActiveDayRole(p);
-      return active !== undefined && wolfTeamIds.has(active);
-    }
-    for (const [rid, mems] of Object.entries(roleMembersMap)) {
-      if (wolfTeamIds.has(rid) && (mems ?? []).includes(p)) return true;
-    }
-    return false;
+    const active = getActiveDayRole(p);
+    return active !== undefined && wolfTeamIds.has(active);
   };
 
   const appendDayDeathRounds = (initialDeaths: number[]) => {
@@ -546,6 +589,7 @@ export default function DayScreen() {
         cupidLovers,
         gameMode,
         existingDeaths,
+        fireWolfBurnRecords,
       );
       return addedRounds.length > 0 ? [...previous, ...addedRounds] : previous;
     });
@@ -567,18 +611,7 @@ export default function DayScreen() {
   useEffect(() => {
     if (!bishopInGame || currentBishopHolder !== null || bishopResolved) return;
     let holder: number | undefined;
-    if (isDualMode) {
-      // First check alive players, then fallback to this-night deaths (upper card just died)
-      holder = [...aliveNums, ...nightChainDeaths].find(p => {
-        const cards = playerCardMap[p];
-        if (!cards) return false;
-        return cards.upper === 'bishop';
-      });
-    } else {
-      const bishopMembers = roleMembersMap['bishop'] ?? [];
-      holder = bishopMembers.find(p => aliveNums.includes(p))
-             ?? bishopMembers.find(p => nightChainDeaths.includes(p));
-    }
+    holder = [...aliveNums, ...nightChainDeaths].find(p => getActiveDayRole(p) === 'bishop');
     if (holder !== undefined) setBishopHolder(holder);
   }, [bishopInGame, currentBishopHolder, bishopResolved]);
 
@@ -587,9 +620,7 @@ export default function DayScreen() {
     if (step !== 4 || typeof exiledPlayer !== 'number') return;
     if (exileAbilityResolved || exileAbility !== 'none') return;
     if (idiotFlippedPlayers.includes(exiledPlayer)) return;
-    const isIdiot = isDualMode
-      ? getActiveDayRole(exiledPlayer) === 'idiot'
-      : (roleMembersMap['idiot'] ?? []).includes(exiledPlayer);
+    const isIdiot = getActiveDayRole(exiledPlayer) === 'idiot';
     if (isIdiot) {
       setExileAbility('idiot');
       setExileAbilityResolved(true);
@@ -606,6 +637,7 @@ export default function DayScreen() {
         playerCardMap,
         upperDeadPlayers,
         gameMode,
+        fireWolfBurnRecords,
       )
     : [];
   const bmHunterPlayer = bloodMoonDeathSkillTriggers.find(trigger => trigger.roleId === 'hunter')?.player;
@@ -617,6 +649,7 @@ export default function DayScreen() {
       roleMembersMap,
       playerCardMap,
       upperDeadPlayers,
+      fireWolfBurnRecords,
     ) === 'hunter')
     .map(player => ({
       player,
@@ -629,15 +662,14 @@ export default function DayScreen() {
         prevDreamwalkerTarget,
         cupidLovers,
         gameMode,
+        fireWolfBurnRecords,
       ),
     }))
     .filter(({ status }) => status !== 'can_trigger');
   const bishopDiedBloodMoon = bishopInGame && delayedDeathAnnouncementRequired &&
     currentBishopHolder !== null && completeDelayedNightDeaths.includes(currentBishopHolder) && !bishopResolved;
   const lastWordsRoleForPreview = lastWordsPlayer !== null
-    ? isDualMode
-      ? getActiveDayRole(lastWordsPlayer)
-      : Object.entries(roleMembersMap).find(([, members]) => (members ?? []).includes(lastWordsPlayer))?.[0]
+    ? getActiveDayRole(lastWordsPlayer)
     : undefined;
   const whiteWolfBringChainComplete =
     lastWordsRoleForPreview !== 'white_wolf' ||
@@ -702,32 +734,43 @@ export default function DayScreen() {
   // Knight: detect if in game
   const knightInGame = selectedRoles.some(r => r.roleId === 'knight');
 
-  // Tengu: detect if died this day phase
-  const tenguDiedThisPhase = (() => {
-    const allDeadSoFar = [...settledNightDeaths, ...resolvedDayDeaths];
-    return allDeadSoFar.some(p => hasActiveRole(p, 'tengu') || (roleMembersMap['tengu'] ?? []).includes(p));
+  // 天狗角色牌一旦死亡，之後每次投票都改為閉眼投票。
+  const tenguHasDied = (() => {
+    const projected = projectDeathState(
+      gameMode,
+      deadPlayers,
+      upperDeadPlayers,
+      [...settledNightDeaths, ...resolvedDayDeaths],
+    );
+    if (!isDualMode) {
+      return (roleMembersMap['tengu'] ?? []).some(player => projected.deadPlayers.includes(player));
+    }
+    return Object.entries(playerCardMap).some(([playerText, cards]) => {
+      const player = Number(playerText);
+      return (
+        cards.upper === 'tengu' &&
+        (projected.upperDeadPlayers.includes(player) || projected.deadPlayers.includes(player))
+      ) || (
+        cards.lower === 'tengu' && projected.deadPlayers.includes(player)
+      );
+    });
   })();
 
   // ── Self-destruct helpers ──────────────────────────────────────────────
   const canSelfDestruct = (n: number): boolean => {
-    const role = isDualMode
-      ? getActiveDayRole(n)
-      : Object.entries(roleMembersMap).find(([, members]) => (members ?? []).includes(n))?.[0];
+    const role = getActiveDayRole(n);
     if (!role) return false;
     const def = ROLES.find(r => r.id === role);
     return def?.team === 'wolf' || role === 'old_rogue';
   };
 
   const selfDestructEndsDay = (n: number): boolean => {
-    const role = isDualMode
-      ? getActiveDayRole(n)
-      : Object.entries(roleMembersMap).find(([, members]) => (members ?? []).includes(n))?.[0];
+    const role = getActiveDayRole(n);
     return ROLES.find(r => r.id === role)?.team === 'wolf';
   };
 
   const getSpeechRole = (n: number): string | undefined => {
-    if (isDualMode) return getActiveDayRole(n);
-    return Object.entries(roleMembersMap).find(([, members]) => (members ?? []).includes(n))?.[0];
+    return getActiveDayRole(n);
   };
 
   const getSpeechRoleSlot = (n: number): 'upper' | 'lower' => {
@@ -875,6 +918,8 @@ export default function DayScreen() {
             isDualMode={isDualMode}
             upperRole={upper}
             lowerRole={lower}
+            upperRoleTextColor={fireWolfBurnedCards.some(card => card.player === num && card.slot === 'upper') ? Colors.danger : undefined}
+            lowerRoleTextColor={fireWolfBurnedCards.some(card => card.player === num && card.slot === 'lower') ? Colors.danger : undefined}
             upperDead={
               isDualMode &&
               visualDeathState.upperDeadPlayers.includes(num)
@@ -1003,6 +1048,7 @@ export default function DayScreen() {
             upperDeadPlayers,
             prevDreamwalkerTarget,
             gameMode,
+            fireWolfBurnRecords,
           );
       return (
         <View style={styles.skillScreen}>
@@ -1189,24 +1235,7 @@ export default function DayScreen() {
         </View>
       )}
 
-      {/* 主教：設定持有者 or 夜晚死亡時觸發查驗傳承 */}
-      {bishopInGame && currentBishopHolder === null && !bishopResolved && (
-        <>
-          <Text style={[styles.hint, { marginTop: 4 }]}>✝️ 主教在局 — 設定主教持有者（首次使用）</Text>
-          {renderGrid(
-            playerNums,
-            n => aliveNums.includes(n)
-              ? { bg: Colors.surface, border: Colors.surfaceLight, textColor: Colors.textDim }
-              : disabledGridStyle,
-            () => undefined,
-            n => {
-              if (!aliveNums.includes(n)) return;
-              setBishopHolder(n);
-            },
-            { isDisabled: n => !aliveNums.includes(n) },
-          )}
-        </>
-      )}
+      {/* 主教：僅在系統已辨識持有者死亡時觸發查驗傳承 */}
       {bishopInGame && bishopDiedNight && renderBishopUI()}
 
       {/* 夜晚死亡的持徽角色 → 警徽處理 */}
@@ -1249,7 +1278,7 @@ export default function DayScreen() {
           <Text style={styles.skillActor}>{pendingDayDeathSkill.player}號</Text>
         </View>
         <Text style={styles.hint}>本次死亡屬於白天，選擇目標後繼續結算連鎖</Text>
-        {renderDeathRoundNotices(dayDeathRounds, 'pending-day-round')}
+        {renderDeathRoundNotices(showVoteHeader ? voteDeathRounds : dayDeathRounds, 'pending-day-round')}
         {renderGrid(
           playerNums,
           n => canSelectDayDeathSkillTarget(n)
@@ -1364,7 +1393,7 @@ export default function DayScreen() {
       const noticeButtonText = speechDeathNotice === 'self_destruct'
         ? '確認死訊，發表遺言'
         : speechDeathNotice === 'knight_good'
-        ? '確認死訊，進入投票'
+        ? '確認死訊，繼續發言'
         : '確認死訊，進入夜晚';
 
       return (
@@ -1426,9 +1455,7 @@ export default function DayScreen() {
                 return;
               }
               if (noticeSheriffDeathPlayer !== null) setLocalSheriff(finalSheriff);
-              const resumeAtVote = speechDeathNotice === 'knight_good';
               setSpeechDeathNotice(null);
-              if (resumeAtVote) setStep(3);
             }}
           >
             <Text style={styles.nextBtnText}>{noticeButtonText}</Text>
@@ -1485,10 +1512,8 @@ export default function DayScreen() {
 
     // Sub-phase: last words
     if (lastWordsPlayer !== null) {
-      const lwRole = isDualMode ? getActiveDayRole(lastWordsPlayer) : undefined;
-      const lwIsHunter = isDualMode
-        ? lwRole === 'hunter'
-        : (roleMembersMap['hunter'] ?? []).includes(lastWordsPlayer);
+      const lwRole = getActiveDayRole(lastWordsPlayer);
+      const lwIsHunter = lwRole === 'hunter';
       const lwIsWhiteWolf = isDualMode
         ? lwRole === 'white_wolf'
         : (roleMembersMap['white_wolf'] ?? []).includes(lastWordsPlayer);
@@ -1836,8 +1861,7 @@ export default function DayScreen() {
     const canVoteTarget = (n: number) => aliveNums.includes(n) && n !== crowSurroundTarget;
     const monkActive = playerNums.some(n => {
       if (!aliveNums.includes(n)) return false;
-      if (isDualMode) return getActiveDayRole(n) === 'monk';
-      return (roleMembersMap['monk'] ?? []).includes(n);
+      return getActiveDayRole(n) === 'monk';
     });
     return (
       <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollPad}>
@@ -1852,9 +1876,9 @@ export default function DayScreen() {
           </TouchableOpacity>
         )}
         <Text style={styles.hint}>點選被放逐的玩家</Text>
-        {tenguDiedThisPhase && (
+        {tenguHasDied && (
           <View style={[styles.banner, { borderColor: Colors.wolf }]}>
-            <Text style={[styles.bannerText, { color: Colors.wolf }]}>⚡ 天狗已出局 — 本輪投票結果不公開</Text>
+            <Text style={[styles.bannerText, { color: Colors.wolf }]}>⚡ 天狗已死亡，請所有玩家閉眼投票</Text>
           </View>
         )}
         {crowSurroundTarget !== undefined && aliveNums.includes(crowSurroundTarget) && (
@@ -1931,17 +1955,11 @@ export default function DayScreen() {
       if (noVote || typeof exiledPlayer !== 'number') return [];
       const alreadyFlipped = idiotFlippedPlayers.includes(exiledPlayer);
       if (dayChainDeaths.includes(exiledPlayer)) return [];
-      if (isDualMode) {
-        const role = getActiveDayRole(exiledPlayer);
-        if (role === 'hunter')    return ['hunter'];
-        if (role === 'wolf_king') return ['wolfking'];
-        if (role === 'idiot' && !alreadyFlipped) return ['idiot'];
-        return [];
-      }
       const modes: ExileAbility[] = [];
-      if ((roleMembersMap['hunter']   ?? []).includes(exiledPlayer)) modes.push('hunter');
-      if ((roleMembersMap['wolf_king'] ?? []).includes(exiledPlayer)) modes.push('wolfking');
-      if ((roleMembersMap['idiot'] ?? []).includes(exiledPlayer) && !alreadyFlipped) modes.push('idiot');
+      const role = getActiveDayRole(exiledPlayer);
+      if (role === 'hunter') modes.push('hunter');
+      if (role === 'wolf_king') modes.push('wolfking');
+      if (role === 'idiot' && !alreadyFlipped) modes.push('idiot');
       return modes;
     })();
     const bloodMoonCandidates = playerNums.filter(p => {
@@ -2061,8 +2079,8 @@ export default function DayScreen() {
       return (
         <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollPad}>
           {renderVoteHeader('')}
-          {renderDeathRoundDetails(dayDeathRounds, 'result-day-chain')}
-          {dayDeathRounds.length === 0 && (
+          {renderDeathRoundDetails(voteDeathRounds, 'result-day-chain')}
+          {voteDeathRounds.length === 0 && (
             <View style={[styles.banner, styles.bannerNeutral]}>
               <Text style={styles.bannerText}>本次票逐沒有產生死亡</Text>
             </View>
@@ -2284,7 +2302,7 @@ export default function DayScreen() {
             </Text>
           </View>
         )}
-          {!needsResultDayDeathAnnouncement && renderDeathRoundDetails(dayDeathRounds, 'day-chain')}
+          {!needsResultDayDeathAnnouncement && renderDeathRoundDetails(voteDeathRounds, 'day-chain')}
 
         {/* 主教：放逐時觸發查驗傳承 */}
         {bishopInGame && bishopDiedExile && renderBishopUI()}
@@ -2297,17 +2315,13 @@ export default function DayScreen() {
   const renderBishopUI = () => {
     const getRevealColor = (target: number | null, resolved: boolean) => {
       if (target === null) return Colors.village;
-      const rid = isDualMode
-        ? (upperDeadPlayers.includes(target) ? playerCardMap[target]?.lower : playerCardMap[target]?.upper)
-        : Object.entries(roleMembersMap).find(([, ms]) => (ms ?? []).includes(target))?.[0];
+      const rid = getActiveDayRole(target);
       const def = ROLES.find(r => r.id === rid);
       return def ? Colors[def.team] : Colors.village;
     };
 
     if (bishopResolved) {
-      const revealedRole = isDualMode
-        ? (upperDeadPlayers.includes(bishopRevealTarget!) ? playerCardMap[bishopRevealTarget!]?.lower : playerCardMap[bishopRevealTarget!]?.upper)
-        : Object.entries(roleMembersMap).find(([, ms]) => (ms ?? []).includes(bishopRevealTarget!))?.[ 0];
+      const revealedRole = getActiveDayRole(bishopRevealTarget!);
       const revealedDef = ROLES.find(r => r.id === revealedRole);
       const resolvedColor = revealedDef ? Colors[revealedDef.team] : Colors.village;
       return (
@@ -2322,9 +2336,7 @@ export default function DayScreen() {
     const candidates = aliveNums.filter(n => n !== currentBishopHolder);
     const targetColor = getRevealColor(bishopRevealTarget, false);
     const targetRid = bishopRevealTarget !== null
-      ? isDualMode
-        ? (upperDeadPlayers.includes(bishopRevealTarget) ? playerCardMap[bishopRevealTarget]?.lower : playerCardMap[bishopRevealTarget]?.upper)
-        : Object.entries(roleMembersMap).find(([, ms]) => (ms ?? []).includes(bishopRevealTarget!))?.[0]
+      ? getActiveDayRole(bishopRevealTarget)
       : undefined;
     const targetDef = ROLES.find(r => r.id === targetRid);
 
@@ -2417,9 +2429,7 @@ export default function DayScreen() {
     typeof exiledPlayer === 'number' &&
     !idiotFlippedPlayers.includes(exiledPlayer) &&
     !exileAbilityResolved &&
-    (isDualMode
-      ? getActiveDayRole(exiledPlayer) === 'idiot'
-      : (roleMembersMap['idiot'] ?? []).includes(exiledPlayer));
+    getActiveDayRole(exiledPlayer) === 'idiot';
   const resultFlowComplete =
     step === 4 &&
     resultDayDeathsAnnounced &&
@@ -2480,6 +2490,7 @@ export default function DayScreen() {
               upperDeadPlayers,
               prevDreamwalkerTarget,
               gameMode,
+              fireWolfBurnRecords,
             );
         if (nightDeathSkillTarget !== null && resolvedTarget === undefined) {
           setNightDeathSkillBlocked(nightDeathSkillTarget);
@@ -2497,6 +2508,7 @@ export default function DayScreen() {
             cupidLovers,
             gameMode,
             nightChainDeaths,
+            fireWolfBurnRecords,
           );
           if (addedRounds.length > 0) {
             setNightDeathRounds(previous => [...previous, ...addedRounds]);
@@ -2536,15 +2548,13 @@ export default function DayScreen() {
         setSpeechDeathNotice(targetIsWolf ? 'knight_wolf' : 'knight_good');
         return;
       }
+      setVoteDeathRoundStart(dayDeathRounds.length);
       setStep(3);
       return;
     }
     if (step === 3) {
       if (typeof exiledPlayer === 'number') {
-        const activeRole = isDualMode
-          ? getActiveDayRole(exiledPlayer)
-          : Object.entries(roleMembersMap)
-              .find(([, members]) => (members ?? []).includes(exiledPlayer))?.[0];
+        const activeRole = getActiveDayRole(exiledPlayer);
         if (activeRole !== 'idiot') appendDayDeathRounds([exiledPlayer]);
       }
       setStep(4);
@@ -2678,6 +2688,7 @@ export default function DayScreen() {
         upperDeadPlayers,
         prevDreamwalkerTarget,
         gameMode,
+        fireWolfBurnRecords,
       );
       return resolvedTarget === undefined
         ? `確認目標受保護並繼續`

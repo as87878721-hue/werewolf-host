@@ -18,6 +18,10 @@ const {
   getDeathSkillTriggers,
   computeWinResult,
   projectDeathState,
+  getTenguKillAllowance,
+  useGameStore,
+  buildNightSummary,
+  getFireWolfEffectiveRole,
 } = require('./src/store/gameStore.ts');
 
 const same = (actual, expected, label) => {
@@ -162,6 +166,333 @@ assert.deepStrictEqual(projectDeathState(
   [1],
   [1],
 ), { deadPlayers: [1], upperDeadPlayers: [] }, 'dual second death should preview as fully dead');
+
+assert.strictEqual(getTenguKillAllowance({
+  gameMode: 'dual',
+  selectedRoles: [
+    { roleId: 'tengu', count: 1 },
+    { roleId: 'werewolf', count: 1 },
+  ],
+  roleMembersMap: { tengu: [1], werewolf: [2] },
+  playerCardMap: {
+    1: { upper: 'tengu', lower: 'villager' },
+    2: { upper: 'villager', lower: 'werewolf' },
+  },
+  upperDeadPlayers: [],
+  deadPlayers: [],
+  actingTenguPlayers: [1],
+}), 0, 'tengu must wait for a non-active lower wolf card to die');
+
+assert.strictEqual(getTenguKillAllowance({
+  gameMode: 'dual',
+  selectedRoles: [
+    { roleId: 'tengu', count: 1 },
+    { roleId: 'werewolf', count: 1 },
+  ],
+  roleMembersMap: { tengu: [1], werewolf: [2] },
+  playerCardMap: {
+    1: { upper: 'tengu', lower: 'villager' },
+    2: { upper: 'villager', lower: 'werewolf' },
+  },
+  upperDeadPlayers: [],
+  deadPlayers: [2],
+  actingTenguPlayers: [1],
+}), 1, 'tengu gets exactly one kill after every other wolf card dies');
+
+same(computeNightDeaths([
+  { roleId: 'tengu', members: [1], tenguKillTargets: [4, 5] },
+]), [4], 'legacy tengu actions must still resolve at most one kill');
+
+same(computeNightDeaths([
+  { roleId: 'dreamwalker', members: [3], dreamwalkerTarget: 5 },
+  { roleId: 'blind_swordsman', members: [2], blindSwordsmanMode: 'kill', blindSwordsmanTarget: 5 },
+]), [], 'blind swordsman cannot penetrate dreamwalker protection');
+
+same(computeNightDeaths([
+  { roleId: 'blind_swordsman', members: [2], blindSwordsmanMode: 'kill', blindSwordsmanTarget: 5 },
+], { frankenstein: [5] }), [], 'blind swordsman cannot penetrate Frankenstein immunity');
+
+same(computeNightDeaths([
+  { roleId: 'blind_swordsman', members: [2], blindSwordsmanMode: 'monk_vote', blindSwordsmanTarget: 5 },
+]), [], 'monk-vote strike can be selected but has no effect while monk is absent');
+
+useGameStore.setState({
+  gameMode: 'single',
+  currentStep: 1,
+  nightActions: [{ roleId: 'seer', members: [2], checkTarget: 3, checkResult: 'wolf' }],
+  nightHistory: [],
+  checkedPlayers: { 3: 'wolf' },
+  upperDeadPlayers: [],
+  playerCardMap: {},
+  roleMembersMap: { seer: [2], fire_wolf: [1] },
+  fireWolfBurnedPlayers: [],
+  fireWolfBurnedCards: [],
+  fireWolfBurnRecords: [],
+});
+useGameStore.getState().recordAction({ roleId: 'fire_wolf', members: [1], fireWolfTarget: 2 });
+assert.deepStrictEqual(
+  useGameStore.getState().nightActions[0],
+  { roleId: 'seer', members: [], invalidatedByFireWolf: true, invalidatedPlayers: [2] },
+  'fire wolf must invalidate a god action that happened earlier the same night',
+);
+assert.deepStrictEqual(
+  useGameStore.getState().checkedPlayers,
+  {},
+  'fire wolf must remove the invalidated same-night seer result',
+);
+
+useGameStore.setState({
+  gameMode: 'single',
+  currentStep: 1,
+  nightActions: [{ roleId: 'witch', members: [2], saveTarget: 3 }],
+  nightHistory: [],
+  saveUsed: true,
+  poisonUsed: false,
+  upperDeadPlayers: [],
+  playerCardMap: {},
+  roleMembersMap: { witch: [2], fire_wolf: [1] },
+  fireWolfBurnedPlayers: [],
+  fireWolfBurnedCards: [],
+  fireWolfBurnRecords: [],
+});
+useGameStore.getState().recordAction({ roleId: 'fire_wolf', members: [1], fireWolfTarget: 2 });
+assert.strictEqual(
+  useGameStore.getState().saveUsed,
+  false,
+  'fire wolf must refund a potion whose same-night use was invalidated',
+);
+
+const upperBurn = [{ player: 3, slot: 'upper', originalRoleId: 'hunter', night: 1, step: 4 }];
+assert.strictEqual(
+  getFireWolfEffectiveRole(3, 'hunter', 'dual', [], upperBurn),
+  'villager',
+  'a burned upper card must be treated as villager',
+);
+assert.strictEqual(
+  getFireWolfEffectiveRole(3, 'seer', 'dual', [3], upperBurn),
+  'seer',
+  'burning the upper card must not affect the lower active card',
+);
+assert.strictEqual(
+  getFireWolfEffectiveRole(
+    7,
+    'old_rogue',
+    'single',
+    [],
+    [{ player: 7, slot: 'single', originalRoleId: 'old_rogue', night: 1, step: 2 }],
+  ),
+  'villager',
+  'a burned old rogue must lose the self-destruct role',
+);
+assert.strictEqual(
+  getFireWolfEffectiveRole(
+    8,
+    'idiot',
+    'single',
+    [],
+    [{ player: 8, slot: 'single', originalRoleId: 'idiot', night: 1, step: 2 }],
+  ),
+  'villager',
+  'a burned idiot must be exiled as a villager instead of flipping',
+);
+
+const burnedWitchHunter = [{ player: 5, slot: 'single', originalRoleId: 'witch_hunter', night: 1, step: 2 }];
+same(computeNightDeaths(
+  [{ roleId: 'witch', members: [2], poisonTarget: 5 }],
+  { witch_hunter: [5] },
+  {},
+  [],
+  undefined,
+  null,
+  'single',
+  true,
+  [],
+  burnedWitchHunter,
+), [5], 'a burned witch hunter loses poison immunity');
+
+const burnedFrankenstein = [{ player: 5, slot: 'single', originalRoleId: 'frankenstein', night: 1, step: 2 }];
+same(computeNightDeaths(
+  [{ roleId: 'blind_swordsman', members: [2], blindSwordsmanMode: 'kill', blindSwordsmanTarget: 5 }],
+  { frankenstein: [5] },
+  {},
+  [],
+  undefined,
+  null,
+  'single',
+  true,
+  [],
+  burnedFrankenstein,
+), [5], 'a burned Frankenstein loses night immunity');
+
+assert.deepStrictEqual(getDeathSkillTriggers(
+  [[5]],
+  'day',
+  [],
+  { hunter: [5] },
+  {},
+  [],
+  'single',
+  [{ player: 5, slot: 'single', originalRoleId: 'hunter', night: 1, step: 2 }],
+), [], 'a burned hunter must not trigger a death skill');
+
+same(computeNightDeaths(
+  [{ roleId: 'werewolf', members: [1], killTarget: 5 }],
+  { slave_trader: [5], villager: [6] },
+  {},
+  [],
+  undefined,
+  null,
+  'single',
+  true,
+  [6],
+  [{ player: 5, slot: 'single', originalRoleId: 'slave_trader', night: 1, step: 2 }],
+), [5], 'a burned slave trader cannot substitute a slave');
+
+useGameStore.setState({
+  gameMode: 'dual',
+  currentNight: 2,
+  currentStep: 0,
+  nightActions: [],
+  nightHistory: [],
+  upperDeadPlayers: [],
+  playerCardMap: { 4: { upper: 'seer', lower: 'hunter' } },
+  roleMembersMap: { seer: [4], hunter: [4], fire_wolf: [1] },
+  fireWolfBurnedPlayers: [],
+  fireWolfBurnedCards: [],
+  fireWolfBurnRecords: [],
+});
+useGameStore.getState().captureNightStepSnapshot(0);
+useGameStore.getState().recordAction({ roleId: 'fire_wolf', members: [1], fireWolfTarget: 4 });
+assert.deepStrictEqual(
+  useGameStore.getState().fireWolfBurnRecords,
+  [{ player: 4, slot: 'upper', originalRoleId: 'seer', night: 2, step: 0 }],
+  'fire wolf burn history must record the exact card slot and action time',
+);
+useGameStore.getState().rewindNightStep(0);
+assert.deepStrictEqual(
+  useGameStore.getState().fireWolfBurnRecords,
+  [],
+  'rewinding the fire wolf step must remove its burn record',
+);
+
+useGameStore.setState({
+  gameMode: 'single',
+  currentNight: 2,
+  currentStep: 1,
+  nightActions: [{ roleId: 'seer', members: [4], checkTarget: 5, checkResult: 'good' }],
+  nightHistory: [{
+    nightNumber: 1,
+    actions: [
+      { roleId: 'fire_wolf', members: [1], fireWolfTarget: 2 },
+      { roleId: 'slave_trader', members: [3], slaveTarget: 2 },
+    ],
+    summary: [],
+  }],
+  roleMembersMap: { fire_wolf: [1], seer: [2, 4], slave_trader: [3] },
+  playerCardMap: {},
+  upperDeadPlayers: [],
+  checkedPlayers: { 5: 'good' },
+  slaveTraderSlaves: [2],
+  fireWolfBurnedPlayers: [2],
+  fireWolfBurnedCards: [],
+  fireWolfBurnRecords: [
+    { player: 2, slot: 'single', originalRoleId: 'seer', night: 1, step: 0 },
+  ],
+});
+useGameStore.getState().recordAction({ roleId: 'fire_wolf', members: [1], fireWolfTarget: 4 });
+assert.deepStrictEqual(
+  useGameStore.getState().slaveTraderSlaves,
+  [2],
+  'state rebuild must preserve enslavement performed after the target was burned into a villager',
+);
+
+useGameStore.setState({
+  gameMode: 'single',
+  currentNight: 2,
+  currentStep: 1,
+  nightActions: [{ roleId: 'seer', members: [4], checkTarget: 5, checkResult: 'good' }],
+  nightHistory: [{
+    nightNumber: 1,
+    actions: [
+      { roleId: 'slave_trader', members: [3], slaveTarget: 2 },
+      { roleId: 'fire_wolf', members: [1], fireWolfTarget: 2 },
+    ],
+    summary: [],
+  }],
+  roleMembersMap: { fire_wolf: [1], seer: [2, 4], slave_trader: [3] },
+  playerCardMap: {},
+  upperDeadPlayers: [],
+  checkedPlayers: { 5: 'good' },
+  slaveTraderSlaves: [],
+  fireWolfBurnedPlayers: [2],
+  fireWolfBurnedCards: [],
+  fireWolfBurnRecords: [
+    { player: 2, slot: 'single', originalRoleId: 'seer', night: 1, step: 1 },
+  ],
+});
+useGameStore.getState().recordAction({ roleId: 'fire_wolf', members: [1], fireWolfTarget: 4 });
+assert.deepStrictEqual(
+  useGameStore.getState().slaveTraderSlaves,
+  [],
+  'state rebuild must not retroactively validate enslavement performed before the target was burned',
+);
+
+useGameStore.setState({
+  gameMode: 'single',
+  currentNight: 1,
+  currentStep: 0,
+  nightActions: [],
+  nightHistory: [],
+  roleMembersMap: { fire_wolf: [1], seer: [4] },
+  playerCardMap: {},
+  upperDeadPlayers: [],
+  bishopHolder: 4,
+  fireWolfBurnedPlayers: [],
+  fireWolfBurnedCards: [],
+  fireWolfBurnRecords: [],
+});
+useGameStore.getState().recordAction({ roleId: 'fire_wolf', members: [1], fireWolfTarget: 4 });
+assert.strictEqual(
+  useGameStore.getState().bishopHolder,
+  null,
+  'burning the active card of the inherited bishop holder must remove the inherited skill',
+);
+
+useGameStore.setState({
+  gameMode: 'single',
+  currentNight: 1,
+  currentStep: 0,
+  nightActions: [],
+  nightHistory: [],
+  roleMembersMap: { fire_wolf: [1], villager: [4] },
+  playerCardMap: {},
+  upperDeadPlayers: [],
+  bishopHolder: 4,
+  fireWolfBurnedPlayers: [],
+  fireWolfBurnedCards: [],
+  fireWolfBurnRecords: [],
+});
+useGameStore.getState().recordAction({ roleId: 'fire_wolf', members: [1], fireWolfTarget: 4 });
+assert.strictEqual(
+  useGameStore.getState().bishopHolder,
+  4,
+  'an invalid fire wolf target must not remove an inherited bishop skill',
+);
+
+const newRoleSummary = buildNightSummary([
+  { roleId: 'spirit_wolf', members: [1], spiritWolfKillTarget: 8 },
+  { roleId: 'shaman', members: [2], shamanTarget: 7, shamanMode: 'shield' },
+  { roleId: 'slave_trader', members: [3], slaveTarget: 6 },
+  { roleId: 'fire_wolf', members: [4], fireWolfTarget: 5 },
+  { roleId: 'blind_swordsman', members: [5], blindSwordsmanMode: 'monk_vote', blindSwordsmanTarget: 9 },
+  { roleId: 'explorer', members: [6], explorerResult: 4 },
+  { roleId: 'mummy', members: [7], mummySealedRole: 'seer' },
+]);
+assert.strictEqual(
+  newRoleSummary.some(line => line.endsWith('無行動')),
+  false,
+  'implemented night skills must not fall through to the no-action summary',
+);
 
 console.log('role rule regression tests passed');
 

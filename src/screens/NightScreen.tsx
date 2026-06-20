@@ -16,7 +16,9 @@ import {
   canAssignNightRolePosition,
   getWolfNightParticipants,
   getNightDeathAbilityStatus,
+  getActiveRoleAtPhaseStart,
   getGravediggerLowerInfo,
+  getTenguKillAllowance,
   computeWinResult,
   projectDeathState,
 } from '../store/gameStore';
@@ -35,7 +37,7 @@ const ROLE_CONFIG: Record<string, { memberHint: string; actions: ActionDef[] }> 
   werewolf:    { memberHint: '點選本局所有狼人',    actions: [{ key: 'kill',         label: '🔪 刀人',            maxTargets: 1, color: Colors.primary }] },
   shapeshifter:{ memberHint: '點選變形怪是誰（與狼人同時睜眼）', actions: [] },
   wolf_king:   { memberHint: '點選狼王是誰',        actions: [] },
-  tengu:       { memberHint: '點選天狗是誰',        actions: [{ key: 'kill',         label: '⚡ 擊殺（最多2人）',  maxTargets: 2, color: Colors.wolf }] },
+  tengu:       { memberHint: '點選天狗是誰',        actions: [{ key: 'kill',         label: '⚡ 擊殺（1人）',      maxTargets: 1, color: Colors.wolf }] },
   gargoyle:    { memberHint: '點選石像鬼是誰',      actions: [{ key: 'ambush',       label: '🗿 偷襲神職',         maxTargets: 1, color: '#795548' }] },
   anubis:      { memberHint: '點選阿努比斯是誰',    actions: [{ key: 'scale',        label: '⚖️ 天秤（選2人）',   maxTargets: 2, color: '#ff9800' }] },
   seer:        { memberHint: '點選預言家是誰',      actions: [] },
@@ -70,7 +72,7 @@ const ROLE_CONFIG: Record<string, { memberHint: string; actions: ActionDef[] }> 
     { key: 'firekill', label: '🔪 代替狼刀', maxTargets: 1, color: Colors.primary },
   ] },
   blind_swordsman: { memberHint: '選擇盲人武士玩家', actions: [
-    { key: 'monkstrike', label: '🙏 依僧侶票擊殺', maxTargets: 1, color: Colors.warning },
+    { key: 'monkstrike', label: '🙏 依僧侶票擊殺', maxTargets: 0, color: Colors.warning },
     { key: 'swordkill', label: '🗡️ 自行擊殺', maxTargets: 1, color: Colors.danger },
   ] },
   monk: { memberHint: '選擇僧侶玩家', actions: [] },
@@ -86,8 +88,8 @@ export default function NightScreen() {
     roleMembersMap, deadPlayers, upperDeadPlayers, playerCardMap,
     winResult,
     lastDayExileInfo, lastDayExiledRoleId, sharpshooterUsed, anubisScaledPlayers, anubisScaledCards, cupidLovers,
-    goldenBabyConfig, goldenBabyPlayers, spiritWolfMimic, spiritWolfSaveUsed, spiritWolfPoisonUsed, mummySealedRoles, monkVoteTarget, monkVoteCard, fireWolfBurnedPlayers, fireWolfBurnedCards, fireWolfUsed, slaveTraderSlaves,
-    recordAction, captureNightStepSnapshot, nextStep, prevStep, rewindNightStep, finishNight, resetNight, resetGameProgress, setRoleMembers, transformThief, setGoldenBabyPlayers,
+    goldenBabyConfig, goldenBabyPlayers, spiritWolfMimic, spiritWolfSaveUsed, spiritWolfPoisonUsed, mummySealedRoles, monkVoteTarget, monkVoteCard, fireWolfBurnedPlayers, fireWolfBurnedCards, fireWolfBurnRecords, fireWolfUsed, slaveTraderSlaves,
+    recordAction, captureNightStepSnapshot, nextStep, prevStep, rewindNightStep, restoreDayCommitSnapshot, finishNight, resetNight, resetGameProgress, setRoleMembers, transformThief, setGoldenBabyPlayers,
   } = useGameStore();
   const isDualMode = gameMode === 'dual';
   const { width } = useWindowDimensions();
@@ -281,6 +283,7 @@ export default function NightScreen() {
     return fireWolfBurnedCards.some(card => card.player === player && card.slot === slot);
   };
   const skillMembersRaw = roleId === 'werewolf' ? wolfNightParticipants : activeMembers;
+  const burnedByFireWolf = skillMembersRaw.some(isBurnedByFireWolf);
   const skillMembers = skillMembersRaw.filter(player => !isBurnedByFireWolf(player));
   const canUseRoleSkill = skillMembers.length > 0 && !sealedByMummy;
   const hasSelectedRolePosition =
@@ -313,14 +316,18 @@ export default function NightScreen() {
     return effectiveTarget !== undefined && wolfCheckPlayers.includes(effectiveTarget);
   });
 
-  // 天狗：其他狼人全死才能出刀（最多2刀），否則跳過
+  // 天狗：除正在行動的天狗牌外，所有狼人角色牌死亡後才能出一刀。
   const tenguMaxKills = (() => {
     if (roleId !== 'tengu') return 0;
-    const wolfTeamIds = new Set(ROLES.filter(r => r.team === 'wolf' && r.id !== 'tengu').map(r => r.id));
-    const otherWolvesAlive = [...wolfTeamIds]
-      .flatMap(id => roleMembersMap[id] ?? [])
-      .filter(p => !deadPlayers.includes(p));
-    return otherWolvesAlive.length === 0 ? 2 : 0;
+    return getTenguKillAllowance({
+      gameMode,
+      selectedRoles,
+      roleMembersMap,
+      playerCardMap,
+      upperDeadPlayers,
+      deadPlayers,
+      actingTenguPlayers: skillMembers,
+    });
   })();
 
   // 前一晚攝夢人保護目標（供神射手判斷是否觸發使用）
@@ -334,6 +341,9 @@ export default function NightScreen() {
         prevDreamwalkerTarget,
         cupidLovers,
         gameMode,
+        true,
+        [],
+        fireWolfBurnRecords,
       )
     : [];
   const sharpshooterWillDie =
@@ -344,11 +354,12 @@ export default function NightScreen() {
   const witchHasActed = effectiveNightActions.some(action => action.roleId === 'witch');
   const deathAbilityStatusPending =
     (roleId === 'hunter' || roleId === 'wolf_king') &&
+    skillMembers.length > 0 &&
     !sealedByMummy &&
     witchIsInGame &&
     !witchHasActed;
   const deathAbilityStatuses = (roleId === 'hunter' || roleId === 'wolf_king')
-    ? activeMembers.map(player => ({
+    ? skillMembers.map(player => ({
         player,
         status: getNightDeathAbilityStatus(
           player,
@@ -359,6 +370,7 @@ export default function NightScreen() {
           prevDreamwalkerTarget,
           cupidLovers,
           gameMode,
+          fireWolfBurnRecords,
         ),
       }))
     : [];
@@ -376,8 +388,18 @@ export default function NightScreen() {
     effectiveNightActions.find(a => a.roleId === 'tengu')?.tenguKillTargets?.[0];
   const shamanKnifeTarget = effectiveNightActions.find(a => a.roleId === 'shaman' && a.shamanMode === 'knife')?.shamanTarget;
 
-  const getSingleRoleForPlayer = (player: number): string | undefined =>
+  const getOriginalSingleRoleForPlayer = (player: number): string | undefined =>
     Object.entries(roleMembersMap).find(([, list]) => (list ?? []).includes(player))?.[0];
+  const getEffectiveRoleForPlayer = (player: number): string | undefined =>
+    getActiveRoleAtPhaseStart(
+      player,
+      gameMode,
+      roleMembersMap,
+      playerCardMap,
+      upperDeadPlayers,
+      fireWolfBurnRecords,
+    );
+  const getSingleRoleForPlayer = getEffectiveRoleForPlayer;
   const isGodRole = (rid: string | undefined) => {
     if (!rid || rid === 'villager' || rid === 'wild_child' || rid === 'golden_baby') return false;
     const def = ROLES.find(r => r.id === rid);
@@ -390,7 +412,7 @@ export default function NightScreen() {
       const activeRole = upperDeadPlayers.includes(player) ? playerCardMap[player]?.lower : playerCardMap[player]?.upper;
       return activeRole !== undefined && (wolfRoleIds.has(activeRole) || activeRole === 'wild_child');
     }
-    const activeRole = getSingleRoleForPlayer(player);
+    const activeRole = getEffectiveRoleForPlayer(player);
     return activeRole !== undefined && (wolfRoleIds.has(activeRole) || activeRole === 'wild_child');
   });
   const explorerResult: number | 'unknown' = (() => {
@@ -449,7 +471,10 @@ export default function NightScreen() {
       rewindNightStep(currentStep - 1);
       return;
     }
-    if (currentNight > 1 && navigation.canGoBack()) navigation.goBack();
+    if (currentNight > 1 && restoreDayCommitSnapshot()) {
+      if (navigation.canGoBack()) navigation.goBack();
+      else navigation.navigate('Day');
+    }
   };
 
   useEffect(() => {
@@ -650,7 +675,12 @@ export default function NightScreen() {
       setRoleMembers(roleId, roleMemberWriteList);
     }
     if (!canUseRoleSkill) {
-      recordAction({ roleId, members: sealedByMummy ? skillMembers : [] });
+      recordAction({
+        roleId,
+        members: sealedByMummy ? skillMembers : [],
+        invalidatedByFireWolf: burnedByFireWolf,
+        invalidatedPlayers: burnedByFireWolf ? skillMembersRaw.filter(isBurnedByFireWolf) : undefined,
+      });
       nextStep();
       return;
     }
@@ -702,10 +732,7 @@ export default function NightScreen() {
         action.spiritWolfSaveTarget = actionTargets['spiritsave']?.[0];
         action.spiritWolfPoisonTarget = actionTargets['spiritpoison']?.[0];
         if (action.spiritWolfCheckTarget !== undefined) {
-          action.spiritWolfCheckRole = getSingleRoleForPlayer(action.spiritWolfCheckTarget) ??
-            (upperDeadPlayers.includes(action.spiritWolfCheckTarget)
-              ? playerCardMap[action.spiritWolfCheckTarget]?.lower
-              : playerCardMap[action.spiritWolfCheckTarget]?.upper);
+          action.spiritWolfCheckRole = getEffectiveRoleForPlayer(action.spiritWolfCheckTarget);
         }
         action.spiritWolfMimicRole = spiritWolfMimic?.availableNight !== undefined && spiritWolfMimic.availableNight <= currentNight
           ? spiritWolfMimic.roleId
@@ -875,6 +902,7 @@ export default function NightScreen() {
   const getModeLabel = () => {
     if (!hasSelectedRolePosition) return '請先選擇至少一名角色位置';
     if (sealedByMummy) return '被封印';
+    if (burnedByFireWolf) return '被燒成民了';
     if (rolePositionKnown && !canUseRoleSkill) return '場上無活躍角色，請手動跳過';
     if (roleId === 'werewolf' && wolfNightParticipants.some(player => shapeshifterMembers.includes(player))) {
       return '變形怪參與狼人行動';
@@ -925,6 +953,7 @@ export default function NightScreen() {
         gameMode,
         true,
         slaveTraderSlaves,
+        fireWolfBurnRecords,
       )
     : [];
   const previewNightDeathState = projectDeathState(
@@ -1036,7 +1065,7 @@ export default function NightScreen() {
         <View style={styles.roleRow}>
           <Text style={styles.roleEmoji}>{role.emoji}</Text>
           <View style={{ flex: 1 }}>
-            <Text style={styles.roleName}>{role.name}</Text>
+            <Text style={[styles.roleName, burnedByFireWolf && { color: Colors.danger }]}>{role.name}</Text>
             <Text style={styles.modeLabel}>{getModeLabel()}</Text>
           </View>
           <HeaderMenuButton onBack={handleBack} />
@@ -1084,6 +1113,8 @@ export default function NightScreen() {
                 isDualMode={isDualMode}
                 upperRole={upperRole}
                 lowerRole={lowerRole}
+                upperRoleTextColor={fireWolfBurnedCards.some(card => card.player === num && card.slot === 'upper') ? Colors.danger : undefined}
+                lowerRoleTextColor={fireWolfBurnedCards.some(card => card.player === num && card.slot === 'lower') ? Colors.danger : undefined}
                 upperDead={isDualMode && upperDeadPlayers.includes(num)}
                 disabled={positionUnavailable}
                 onPress={() => togglePlayer(num)}
@@ -1096,13 +1127,15 @@ export default function NightScreen() {
       {/* ── 下半部：行動區 ── */}
       <View style={styles.bottomHalf}>
         {!canUseRoleSkill && (
-          <View style={[styles.infoCard, { borderColor: sealedByMummy ? Colors.warning : Colors.textMuted }]}>
-            <Text style={[styles.infoCardTitle, { color: sealedByMummy ? Colors.warning : Colors.textMuted }]}>
-              {sealedByMummy ? '🪦 被封印' : hasSelectedRolePosition ? '⏭️ 場上無活躍角色' : '📍 尚未確認角色位置'}
+          <View style={[styles.infoCard, { borderColor: sealedByMummy || burnedByFireWolf ? Colors.warning : Colors.textMuted }]}>
+            <Text style={[styles.infoCardTitle, { color: sealedByMummy || burnedByFireWolf ? Colors.warning : Colors.textMuted }]}>
+              {sealedByMummy ? '🪦 被封印' : burnedByFireWolf ? '🔥 被燒成民了' : hasSelectedRolePosition ? '⏭️ 場上無活躍角色' : '📍 尚未確認角色位置'}
             </Text>
             <Text style={styles.infoCardBody}>
               {sealedByMummy
                 ? '被木乃伊封印'
+                : burnedByFireWolf
+                ? '火狼已將這張神職牌燒成平民，本晚技能失效'
                 : hasSelectedRolePosition
                 ? '此角色已死亡或目前不是活躍牌，標記保留，請確認後手動跳過'
                 : '請先選擇至少一名角色位置，否則本晚跳過技能'}
@@ -1176,7 +1209,7 @@ export default function NightScreen() {
         )}
 
         {/* 獵人／狼王死亡技能狀態 */}
-        {skillMembersRaw.length > 0 && (roleId === 'hunter' || roleId === 'wolf_king') && (
+        {skillMembers.length > 0 && (roleId === 'hunter' || roleId === 'wolf_king') && (
           deathAbilityStatusPending ? (
             <View style={[styles.infoCard, { borderColor: Colors.warning }]}>
               <Text style={[styles.infoCardTitle, { color: Colors.warning }]}>⏳ 女巫尚未行動</Text>
@@ -1258,7 +1291,7 @@ export default function NightScreen() {
                   {gravediggerInfo.isWolf ? '🐺 狼人陣營' : '✅ 好人陣營'}
                 </Text>
                 <Text style={styles.infoCardBody}>
-                  {lastDayExileInfo.player}號被票逐上牌，其下牌為【{gravediggerInfo.roleName}】
+                  {lastDayExileInfo.player}號被票逐上牌；只公布下牌陣營，不公布角色
                 </Text>
               </View>
             )}
@@ -1278,6 +1311,14 @@ export default function NightScreen() {
             </View>
           ) : (
             <>
+              <View style={[styles.infoCard, { borderColor: Colors.wolf }]}>
+                <Text style={[styles.infoCardTitle, { color: Colors.wolf }]}>🐺 活躍牌狼隊判定</Text>
+                <Text style={styles.infoCardBody}>
+                  {wolfCheckPlayers.length > 0
+                    ? `${wolfCheckPlayers.map(player => `${player}號`).join('、')}（包含野孩子）`
+                    : '目前沒有已確認為狼隊的活躍牌'}
+                </Text>
+              </View>
               <View style={styles.actionRow}>
                 <TouchableOpacity
                   style={[styles.actionBtn, { borderColor: Colors.warning }, sharpshooterDeclared && { backgroundColor: Colors.warning + '30' }]}
@@ -1336,10 +1377,7 @@ export default function NightScreen() {
             <Text style={styles.infoCardBody}>
               {actionTargets['spiritcheck'][0]}號：
               {ROLES.find(r => r.id === (
-                getSingleRoleForPlayer(actionTargets['spiritcheck'][0]) ??
-                (upperDeadPlayers.includes(actionTargets['spiritcheck'][0])
-                  ? playerCardMap[actionTargets['spiritcheck'][0]]?.lower
-                  : playerCardMap[actionTargets['spiritcheck'][0]]?.upper)
+                getEffectiveRoleForPlayer(actionTargets['spiritcheck'][0])
               ))?.name ?? '未知'}
             </Text>
           </View>
@@ -1423,6 +1461,11 @@ export default function NightScreen() {
               <View style={styles.actionRow}>
                 {availableRoleActions.map(def => {
                   const targets = actionTargets[def.key] ?? [];
+                  const monkVoteCardLabel = monkVoteCard
+                    ? `${monkVoteCard.player}號${gameMode === 'dual' ? (monkVoteCard.slot === 'upper' ? '上牌' : '下牌') : ''}`
+                    : effectiveMonkVoteTarget !== undefined
+                    ? `${effectiveMonkVoteTarget}號`
+                    : '無有效票型';
                   return (
                     <TouchableOpacity
                       key={def.key}
@@ -1432,11 +1475,13 @@ export default function NightScreen() {
                       <Text style={[styles.actionBtnText, { color: roleId === 'tengu' && def.key === 'kill' && tenguMaxKills === 0 ? Colors.textMuted : def.color }]}>
                         {roleId === 'tengu' && def.key === 'kill'
                           ? tenguMaxKills === 0 ? '⚡ 擊殺（本晚跳過）' : `⚡ 擊殺（最多${tenguMaxKills}人）`
+                          : roleId === 'blind_swordsman' && def.key === 'monkstrike'
+                          ? `🙏 依僧侶票擊殺：${monkVoteCardLabel}`
                           : def.label}
                       </Text>
                       {roleId === 'tengu' && def.key === 'kill' && (
                         <Text style={styles.actionSubText}>
-                          {tenguMaxKills === 2 ? '⚠️ 其他狼人已全滅，可2刀' : '仍有其他狼存活，本晚不出刀'}
+                          {tenguMaxKills === 1 ? '⚠️ 其他狼人角色牌已全滅，可出一刀' : '仍有其他狼人角色牌未死亡，本晚不出刀'}
                         </Text>
                       )}
                       {roleId === 'guard' && def.key === 'protect' && lastGuardProtect !== undefined && (
@@ -1455,6 +1500,19 @@ export default function NightScreen() {
             ) : availableRoleActions.length === 0 ? (
               <Text style={styles.noActionText}>此腳色無夜間行動，確認後繼續</Text>
             ) : null}
+            {roleId === 'fire_wolf' && actionTargets['burn']?.[0] !== undefined && (() => {
+              const target = actionTargets['burn'][0];
+              const targetRole = gameMode === 'dual'
+                ? playerCardMap[target]?.[upperDeadPlayers.includes(target) ? 'lower' : 'upper']
+                : getOriginalSingleRoleForPlayer(target);
+              if (!isGodRole(targetRole)) return null;
+              return (
+                <View style={[styles.infoCard, { borderColor: Colors.danger }]}>
+                  <Text style={[styles.infoCardTitle, { color: Colors.danger }]}>🔥 {target}號被燒成民了</Text>
+                  <Text style={styles.infoCardBody}>該神職本晚技能立即失效；若已行動，先前行動會在確認後撤銷</Text>
+                </View>
+              );
+            })()}
           </>
         )}
 

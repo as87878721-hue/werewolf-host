@@ -1,8 +1,8 @@
 ﻿import React, { useState, useEffect, useRef } from 'react';
 import {
-  View, Text, StyleSheet, TouchableOpacity, ScrollView, useWindowDimensions,
+  BackHandler, View, Text, StyleSheet, TouchableOpacity, ScrollView, useWindowDimensions,
 } from 'react-native';
-import { CommonActions, useNavigation } from '@react-navigation/native';
+import { CommonActions, useFocusEffect, useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../../App';
 import { Colors } from '../theme/colors';
@@ -458,6 +458,14 @@ export default function DayScreen() {
       setStep(previous => Math.max(previous - 1, 0));
     }
   };
+
+  useFocusEffect(React.useCallback(() => {
+    const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+      handleBack();
+      return true;
+    });
+    return () => subscription.remove();
+  }, [handleBack]));
 
   const sheriffExplosionChainPending =
     sheriffExplosionPlayer !== null && !sheriffExplosionChainAnnounced;

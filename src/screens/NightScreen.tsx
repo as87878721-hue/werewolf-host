@@ -1,6 +1,6 @@
 ﻿import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, useWindowDimensions } from 'react-native';
-import { CommonActions, useNavigation } from '@react-navigation/native';
+import { BackHandler, View, Text, StyleSheet, TouchableOpacity, useWindowDimensions } from 'react-native';
+import { CommonActions, useFocusEffect, useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../../App';
 import { Colors } from '../theme/colors';
@@ -476,6 +476,14 @@ export default function NightScreen() {
       else navigation.navigate('Day');
     }
   };
+
+  useFocusEffect(React.useCallback(() => {
+    const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+      handleBack();
+      return true;
+    });
+    return () => subscription.remove();
+  }, [handleBack]));
 
   useEffect(() => {
     navigation.setOptions({

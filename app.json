@@ -1,11 +1,11 @@
 {
   "expo": {
-    "name": "werewolf-host",
+    "name": "狼人殺主持",
     "slug": "werewolf-host",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
-    "userInterfaceStyle": "light",
+    "userInterfaceStyle": "dark",
     "experiments": {
       "baseUrl": "/werewolf-host"
     },
@@ -13,6 +13,8 @@
       "supportsTablet": true
     },
     "android": {
+      "package": "com.as87878721.werewolfhost",
+      "versionCode": 1,
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/android-icon-foreground.png",

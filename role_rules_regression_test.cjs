@@ -26,6 +26,8 @@ const {
   resolveAutomaticDeathRounds,
   buildDeathCauseMap,
   getNightDeathCauseMap,
+  mergePersistedGameState,
+  MAX_GAME_LOG_ENTRIES,
 } = require('./src/store/gameStore.ts');
 
 const same = (actual, expected, label) => {
@@ -618,6 +620,33 @@ assert.strictEqual(
   typeof useGameStore.persist.rehydrate,
   'function',
   'game progress and configurations must use persistent storage',
+);
+
+const migratedLegacyState = mergePersistedGameState(
+  { currentNight: 7, nightActions: [] },
+  useGameStore.getInitialState(),
+);
+assert.strictEqual(migratedLegacyState.currentNight, 7, 'legacy progress must be retained during migration');
+assert.strictEqual(
+  migratedLegacyState.sheriffExplosionRule,
+  useGameStore.getInitialState().sheriffExplosionRule,
+  'missing fields in legacy saves must use current defaults',
+);
+assert.strictEqual(typeof migratedLegacyState.endDay, 'function', 'store actions must survive persisted-state merging');
+
+useGameStore.setState({ gameLog: [], currentNight: 1 });
+for (let index = 0; index < MAX_GAME_LOG_ENTRIES + 5; index += 1) {
+  useGameStore.getState().appendLog('測試', `紀錄 ${index}`);
+}
+assert.strictEqual(
+  useGameStore.getState().gameLog.length,
+  MAX_GAME_LOG_ENTRIES,
+  'display logs must be capped to prevent unbounded storage growth',
+);
+assert.strictEqual(
+  useGameStore.getState().gameLog.at(-1).id,
+  MAX_GAME_LOG_ENTRIES + 5,
+  'capped logs must keep monotonically increasing ids',
 );
 
 console.log('role rule regression tests passed');

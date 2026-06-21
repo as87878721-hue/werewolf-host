@@ -173,6 +173,8 @@ export function getFireWolfEffectiveRole(
 }
 
 const uniqueNums = (players: number[]) => [...new Set(players)];
+export const GAME_PERSISTENCE_VERSION = 1;
+export const MAX_GAME_LOG_ENTRIES = 500;
 
 function membersForRoleIds(roleIds: string[], roleMembersMap: Record<string, number[]>): number[] {
   return uniqueNums(roleIds.flatMap(roleId => roleMembersMap[roleId] ?? []));
@@ -703,6 +705,14 @@ function mergeRoleCards(cards: PlayerRoleCard[]): PlayerRoleCard[] {
   return result;
 }
 
+export function mergePersistedGameState(persistedState: unknown, currentState: GameState): GameState {
+  if (!persistedState || typeof persistedState !== 'object') return currentState;
+  return {
+    ...currentState,
+    ...(persistedState as Partial<GameState>),
+  };
+}
+
 export const useGameStore = create<GameState>()(persist((set, get) => ({
   gameMode: 'single',
   playerCount: 9,
@@ -836,8 +846,8 @@ export const useGameStore = create<GameState>()(persist((set, get) => ({
   appendLog: (phase, text) => set(state => ({
     gameLog: [
       ...state.gameLog,
-      { id: state.gameLog.length + 1, night: state.currentNight, phase, text },
-    ],
+      { id: (state.gameLog.at(-1)?.id ?? 0) + 1, night: state.currentNight, phase, text },
+    ].slice(-MAX_GAME_LOG_ENTRIES),
   })),
 
   setUpperDead: (players) => set({ upperDeadPlayers: players }),
@@ -1852,7 +1862,10 @@ export const useGameStore = create<GameState>()(persist((set, get) => ({
   },
 }), {
   name: 'werewolf-host-game-state',
+  version: GAME_PERSISTENCE_VERSION,
   storage: createJSONStorage(() => gamePersistStorage),
+  migrate: persistedState => persistedState as GameState,
+  merge: (persistedState, currentState) => mergePersistedGameState(persistedState, currentState),
 }));
 
 function fmt(n: number) { return `${n}號`; }

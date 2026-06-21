@@ -25,7 +25,7 @@ const summarizeRoles = (config: GameConfigSnapshot) =>
 
 export default function ConfigScreen() {
   const navigation = useNavigation<Nav>();
-  const { gameMode, lastConfigs, savedConfigs, applyConfig } = useGameStore();
+  const { gameMode, lastConfigs, savedConfigs, applyConfig, deleteSavedConfig } = useGameStore();
   const defaultConfig = gameMode === 'dual' ? DEFAULT_DUAL_CONFIG : DEFAULT_SINGLE_CONFIG;
   const lastConfig = lastConfigs[gameMode];
   const customConfigs = savedConfigs[gameMode] ?? [];
@@ -36,33 +36,46 @@ export default function ConfigScreen() {
   };
 
   const renderConfig = (label: string, config: GameConfigSnapshot, variant: ConfigVariant, index?: number) => (
-    <TouchableOpacity
+    <View
       key={`${variant}-${index ?? 0}-${config.name}`}
       style={[
         styles.configCard,
         variant === 'last' && styles.lastCard,
         variant === 'saved' && styles.savedCard,
       ]}
-      onPress={() => chooseConfig(config)}
-      activeOpacity={0.8}
     >
-      <View style={styles.cardHeader}>
-        <Text style={styles.cardTitle}>{label}</Text>
-        <Text style={styles.playerCount}>{config.playerCount} 人</Text>
-      </View>
-      <Text style={styles.configName}>{config.name}</Text>
-      <Text style={styles.summary} numberOfLines={4}>{summarizeRoles(config)}</Text>
-      {config.mode === 'dual' && (
-        <Text style={styles.extraLine}>
-          金寶寶：{config.goldenBabyConfig.min}-{config.goldenBabyConfig.max}
-        </Text>
+      <TouchableOpacity
+        style={styles.configSelect}
+        onPress={() => chooseConfig(config)}
+        activeOpacity={0.8}
+      >
+        <View style={[styles.cardHeader, variant === 'saved' && styles.savedCardHeader]}>
+          <Text style={styles.cardTitle}>{label}</Text>
+          <Text style={styles.playerCount}>{config.playerCount} 人</Text>
+        </View>
+        <Text style={styles.configName}>{config.name}</Text>
+        <Text style={styles.summary} numberOfLines={4}>{summarizeRoles(config)}</Text>
+        {config.mode === 'dual' && (
+          <Text style={styles.extraLine}>
+            金寶寶：{config.goldenBabyConfig.min}-{config.goldenBabyConfig.max}
+          </Text>
+        )}
+        {config.mode === 'single' && (
+          <Text style={styles.extraLine}>
+            勝利條件：{config.singleWinRule === 'city' ? '屠城' : '屠邊'}
+          </Text>
+        )}
+      </TouchableOpacity>
+      {variant === 'saved' && index !== undefined && (
+        <TouchableOpacity
+          style={styles.deleteButton}
+          onPress={() => deleteSavedConfig(gameMode, index)}
+          activeOpacity={0.8}
+        >
+          <Text style={styles.deleteButtonText}>刪除</Text>
+        </TouchableOpacity>
       )}
-      {config.mode === 'single' && (
-        <Text style={styles.extraLine}>
-          勝利條件：{config.singleWinRule === 'city' ? '屠城' : '屠邊'}
-        </Text>
-      )}
-    </TouchableOpacity>
+    </View>
   );
 
   return (
@@ -112,21 +125,40 @@ const styles = StyleSheet.create({
   sectionTitle: { color: Colors.text, fontSize: 16, fontWeight: 'bold' },
   sectionSub: { color: Colors.textDim, fontSize: 12 },
   configCard: {
+    position: 'relative',
     borderWidth: 1.5,
     borderColor: Colors.primary,
     backgroundColor: Colors.surface,
     borderRadius: 10,
+    overflow: 'hidden',
+  },
+  configSelect: {
     padding: 14,
     gap: 8,
   },
   lastCard: { borderColor: Colors.warning },
   savedCard: { borderColor: Colors.village },
   cardHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  savedCardHeader: { paddingRight: 58 },
   cardTitle: { color: Colors.text, fontSize: 16, fontWeight: 'bold' },
   playerCount: { color: Colors.primary, fontSize: 14, fontWeight: 'bold' },
   configName: { color: Colors.text, fontSize: 14 },
   summary: { color: Colors.textDim, fontSize: 12, lineHeight: 18 },
   extraLine: { color: '#ffd54f', fontSize: 12, fontWeight: 'bold' },
+  deleteButton: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    minWidth: 48,
+    height: 34,
+    borderWidth: 1,
+    borderColor: Colors.danger,
+    borderRadius: 6,
+    backgroundColor: Colors.background,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  deleteButtonText: { color: Colors.danger, fontSize: 12, fontWeight: 'bold' },
   emptyCard: {
     borderWidth: 1,
     borderColor: Colors.surfaceLight,

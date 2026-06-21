@@ -1,5 +1,7 @@
 ﻿import { create } from 'zustand';
+import { createJSONStorage, persist } from 'zustand/middleware';
 import { ROLES } from '../data/roles';
+import { gamePersistStorage } from './persistStorage';
 
 export interface RoleEntry {
   roleId: string;
@@ -465,6 +467,7 @@ interface GameState {
   setConfigName: (name: string) => void;
   applyConfig: (config: GameConfigSnapshot) => void;
   saveCurrentConfig: () => void;
+  deleteSavedConfig: (mode: GameMode, index: number) => void;
   appendLog: (phase: string, text: string) => void;
   setUpperDead: (players: number[]) => void;
   addRole: (roleId: string) => void;
@@ -700,7 +703,7 @@ function mergeRoleCards(cards: PlayerRoleCard[]): PlayerRoleCard[] {
   return result;
 }
 
-export const useGameStore = create<GameState>((set, get) => ({
+export const useGameStore = create<GameState>()(persist((set, get) => ({
   gameMode: 'single',
   playerCount: 9,
   selectedRoles: [...DEFAULT_ROLES],
@@ -824,6 +827,12 @@ export const useGameStore = create<GameState>((set, get) => ({
       },
     }));
   },
+  deleteSavedConfig: (mode, index) => set(state => ({
+    savedConfigs: {
+      ...state.savedConfigs,
+      [mode]: (state.savedConfigs[mode] ?? []).filter((_, configIndex) => configIndex !== index),
+    },
+  })),
   appendLog: (phase, text) => set(state => ({
     gameLog: [
       ...state.gameLog,
@@ -1841,6 +1850,9 @@ export const useGameStore = create<GameState>((set, get) => ({
       return { playerCardMap, roleMembersMap };
     });
   },
+}), {
+  name: 'werewolf-host-game-state',
+  storage: createJSONStorage(() => gamePersistStorage),
 }));
 
 function fmt(n: number) { return `${n}號`; }

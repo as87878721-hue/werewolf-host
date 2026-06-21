@@ -10,9 +10,10 @@ type Nav = NativeStackNavigationProp<RootStackParamList, 'Home'>;
 
 export default function HomeScreen() {
   const navigation = useNavigation<Nav>();
-  const { startNewGame, nightHistory, nightOrder } = useGameStore();
+  const { startNewGame, nightHistory, nightOrder, currentNight, winResult } = useGameStore();
 
-  const canContinue = nightHistory.length > 0 && nightOrder.length > 0;
+  const canContinue = nightOrder.length > 0 && winResult === null;
+  const resumeScreen = nightHistory.some(record => record.nightNumber === currentNight) ? 'Day' : 'Night';
 
   const handleStart = (mode: GameMode) => {
     startNewGame(mode);
@@ -49,9 +50,9 @@ export default function HomeScreen() {
         {canContinue && (
           <TouchableOpacity
             style={[styles.btn, styles.btnContinue]}
-            onPress={() => navigation.navigate('Night')}
+            onPress={() => navigation.navigate(resumeScreen)}
           >
-            <Text style={styles.btnLabel}>🌙 繼續第 {nightHistory.length + 1} 晚</Text>
+            <Text style={styles.btnLabel}>🌙 繼續第 {currentNight} {resumeScreen === 'Day' ? '天' : '晚'}</Text>
             <Text style={styles.btnSub}>延續上一局</Text>
           </TouchableOpacity>
         )}

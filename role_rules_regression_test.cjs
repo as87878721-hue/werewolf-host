@@ -600,5 +600,25 @@ assert.strictEqual(
   'death logs must include the cause',
 );
 
+useGameStore.setState({
+  savedConfigs: {
+    single: [
+      { name: '配置 A', mode: 'single', playerCount: 9, selectedRoles: [], goldenBabyConfig: { min: 0, max: 0 }, singleWinRule: 'edge' },
+      { name: '配置 B', mode: 'single', playerCount: 12, selectedRoles: [], goldenBabyConfig: { min: 0, max: 0 }, singleWinRule: 'city' },
+    ],
+  },
+});
+useGameStore.getState().deleteSavedConfig('single', 0);
+assert.deepStrictEqual(
+  useGameStore.getState().savedConfigs.single?.map(config => config.name),
+  ['配置 B'],
+  'deleting a saved config must remove only the selected entry',
+);
+assert.strictEqual(
+  typeof useGameStore.persist.rehydrate,
+  'function',
+  'game progress and configurations must use persistent storage',
+);
+
 console.log('role rule regression tests passed');
 
